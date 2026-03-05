@@ -10,7 +10,7 @@ const DEFAULT_CONFIG: SelfEvolveConfig = {
     k1: 5,
     k2: 3,
     delta: 0.15,
-    tau: 0.1,
+    tau: 0.85,
     lambda: 0.5,
     epsilon: 0.1,
   },

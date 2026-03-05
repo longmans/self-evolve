@@ -66,6 +66,9 @@ Default learning gates:
 - `runtime.minAbsReward=0.15`
 - `runtime.minRewardConfidence=0.55`
 
+Default retrieval gate:
+- `retrieval.tau=0.85` (only inject memories when best similarity is high enough)
+
 Learning modes (`runtime.learnMode`):
 - `balanced` (default): prefer tool turns; no-tool turns require high reward/confidence.
 - `tools_only`: learn only when tools were called (lowest token cost).
@@ -139,6 +142,9 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 - `runtime.observeTurns=0`
 - `runtime.minAbsReward=0.15`
 - `runtime.minRewardConfidence=0.55`
+
+默认检索门槛：
+- `retrieval.tau=0.85`（仅在最高相似度足够高时才注入记忆）
 
 学习模式 `runtime.learnMode`：
 - `balanced`（默认）：优先学习工具回合；无工具回合需高奖励高置信。
