@@ -20,6 +20,9 @@ function config(overrides?: Partial<SelfEvolveConfig["reward"]>): SelfEvolveConf
       observeTurns: 0,
       minAbsReward: 0,
       minRewardConfidence: 0,
+      learnMode: "balanced",
+      noToolMinAbsReward: 0.8,
+      noToolMinRewardConfidence: 0.9,
     },
     experience: {
       summarizer: "openai",

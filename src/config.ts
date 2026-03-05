@@ -22,7 +22,7 @@ const DEFAULT_CONFIG: SelfEvolveConfig = {
     rewardFailure: -1,
   },
   memory: {
-    maxEntries: 2000,
+    maxEntries: 200,
     maxExperienceChars: 1200,
     includeFailures: true,
   },
@@ -34,9 +34,12 @@ const DEFAULT_CONFIG: SelfEvolveConfig = {
   runtime: {
     minPromptChars: 6,
     minFeedbackChars: 2,
-    observeTurns: 3,
+    observeTurns: 0,
     minAbsReward: 0.15,
     minRewardConfidence: 0.55,
+    learnMode: "balanced",
+    noToolMinAbsReward: 0.8,
+    noToolMinRewardConfidence: 0.9,
   },
   experience: {
     summarizer: "openai",
@@ -274,6 +277,26 @@ export const selfEvolveConfigSchema = {
           runtimeRaw,
           "minRewardConfidence",
           DEFAULT_CONFIG.runtime.minRewardConfidence,
+          0,
+          1,
+        ),
+        learnMode:
+          runtimeRaw.learnMode === "balanced" ||
+          runtimeRaw.learnMode === "tools_only" ||
+          runtimeRaw.learnMode === "all"
+            ? runtimeRaw.learnMode
+            : DEFAULT_CONFIG.runtime.learnMode,
+        noToolMinAbsReward: readNumber(
+          runtimeRaw,
+          "noToolMinAbsReward",
+          DEFAULT_CONFIG.runtime.noToolMinAbsReward,
+          0,
+          1,
+        ),
+        noToolMinRewardConfidence: readNumber(
+          runtimeRaw,
+          "noToolMinRewardConfidence",
+          DEFAULT_CONFIG.runtime.noToolMinRewardConfidence,
           0,
           1,
         ),

@@ -1,4 +1,5 @@
 export type EmbeddingProvider = "openai" | "hash";
+export type LearnMode = "balanced" | "tools_only" | "all";
 
 export type SelfEvolveConfig = {
   embedding: {
@@ -42,6 +43,9 @@ export type SelfEvolveConfig = {
     observeTurns: number;
     minAbsReward: number;
     minRewardConfidence: number;
+    learnMode: LearnMode;
+    noToolMinAbsReward: number;
+    noToolMinRewardConfidence: number;
   };
   experience: {
     summarizer: "openai";

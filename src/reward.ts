@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { zodTextFormat } from "openai/helpers/zod";
+import { z } from "zod";
 import type { SelfEvolveConfig } from "./types.js";
 
 export type RewardInput = {
@@ -11,6 +13,7 @@ export type RewardResult = {
   score: number;
   confidence: number;
   source: "openai" | "unavailable";
+  unavailableReason?: string;
 };
 
 function clampScore(value: number): number {
@@ -20,16 +23,26 @@ function clampScore(value: number): number {
   return Math.max(-1, Math.min(1, value));
 }
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return null;
+const RewardSchema = z.object({
+  score: z.number(),
+  confidence: z.number().nullable(),
+  reason: z.string().nullable(),
+});
+
+function formatUnavailableReason(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "openai-request-failed:unknown";
   }
-  return null;
+  const base = error.name || "Error";
+  const message = error.message?.trim() || "no-message";
+  const asRecord = error as Record<string, unknown>;
+  const status =
+    typeof asRecord.status === "number" ? ` status=${String(asRecord.status)}` : "";
+  const code =
+    typeof asRecord.code === "string" || typeof asRecord.code === "number"
+      ? ` code=${String(asRecord.code)}`
+      : "";
+  return `openai-request-failed:${base}:${message}${status}${code}`;
 }
 
 export class RewardScorer {
@@ -44,21 +57,34 @@ export class RewardScorer {
 
   async score(input: RewardInput): Promise<RewardResult> {
     if (!input.userFeedback.trim()) {
-      return { score: 0, confidence: 0, source: "unavailable" };
+      return { score: 0, confidence: 0, source: "unavailable", unavailableReason: "empty-feedback" };
     }
     if (!this.openaiClient || this.config.reward.provider !== "openai") {
-      return { score: 0, confidence: 0, source: "unavailable" };
+      return {
+        score: 0,
+        confidence: 0,
+        source: "unavailable",
+        unavailableReason: "openai-client-unavailable",
+      };
     }
     try {
-      const completion = await this.openaiClient.chat.completions.create({
+      const response = await this.openaiClient.responses.parse({
         model: this.config.reward.model,
         temperature: this.config.reward.temperature,
-        response_format: { type: "json_object" },
-        messages: [
+        input: [
           {
             role: "system",
             content:
-              "You are a strict reward model for agent learning. Evaluate whether the user's latest message indicates satisfaction with the previous assistant response. Return JSON only: {\"score\": number, \"confidence\": number, \"reason\": string}. score must be in [-1, 1]. confidence must be in [0,1]. Positive score means helpful/correct. Negative means incorrect/unhelpful. Near 0 means unclear.",
+              [
+                "You are a strict reward model for agent learning.",
+                "Evaluate ONLY whether the user's latest message explicitly reflects satisfaction or dissatisfaction with the previous assistant response.",
+                "Important rules:",
+                "1) If the user is asking a new question, switching topic, or giving neutral continuation with no explicit judgment, score MUST stay near zero in [-0.1, 0.1].",
+                "2) Use high positive/negative scores only when there is explicit evaluative signal (e.g., works/thanks/fixed vs wrong/still broken/error).",
+                "3) If evidence is weak or ambiguous, keep score near zero and lower confidence.",
+                "Return JSON only: {\"score\": number, \"confidence\": number, \"reason\": string}.",
+                "score in [-1,1], confidence in [0,1].",
+              ].join("\n"),
           },
           {
             role: "user",
@@ -69,21 +95,34 @@ export class RewardScorer {
             ].join("\n\n"),
           },
         ],
+        text: {
+          format: zodTextFormat(RewardSchema, "reward_feedback"),
+        },
       });
-      const raw = completion.choices[0]?.message?.content ?? "";
-      const parsed = parseJsonObject(raw);
-      const score = parsed?.score;
-      const confidence = parsed?.confidence;
-      if (typeof score !== "number") {
-        return { score: 0, confidence: 0, source: "unavailable" };
+      const parsed = response.output_parsed;
+      if (!parsed) {
+        return {
+          score: 0,
+          confidence: 0,
+          source: "unavailable",
+          unavailableReason: "empty-structured-output",
+        };
       }
       return {
-        score: clampScore(score),
-        confidence: typeof confidence === "number" ? Math.max(0, Math.min(1, confidence)) : 0,
+        score: clampScore(parsed.score),
+        confidence:
+          typeof parsed.confidence === "number"
+            ? Math.max(0, Math.min(1, parsed.confidence))
+            : 0,
         source: "openai",
       };
-    } catch {
-      return { score: 0, confidence: 0, source: "unavailable" };
+    } catch (error) {
+      return {
+        score: 0,
+        confidence: 0,
+        source: "unavailable",
+        unavailableReason: formatUnavailableReason(error),
+      };
     }
   }
 }

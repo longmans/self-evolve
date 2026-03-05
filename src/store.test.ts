@@ -18,6 +18,9 @@ function makeConfig(): SelfEvolveConfig {
       observeTurns: 0,
       minAbsReward: 0,
       minRewardConfidence: 0,
+      learnMode: "balanced",
+      noToolMinAbsReward: 0.8,
+      noToolMinRewardConfidence: 0.9,
     },
     experience: {
       summarizer: "openai",
@@ -88,9 +91,9 @@ describe("EpisodicStore", () => {
     const dir = await mkdtemp(join(tmpdir(), "self-evolve-store-"));
     const filePath = join(dir, "state.json");
     const store = new EpisodicStore(filePath);
-    store.add({ intent: "1", experience: "1", embedding: [1], qInit: 0, maxEntries: 2 });
-    store.add({ intent: "2", experience: "2", embedding: [1], qInit: 0, maxEntries: 2 });
-    store.add({ intent: "3", experience: "3", embedding: [1], qInit: 0, maxEntries: 2 });
+    store.add({ intent: "1", experience: "1", embedding: [1, 0], qInit: 0, maxEntries: 2 });
+    store.add({ intent: "2", experience: "2", embedding: [0, 1], qInit: 0, maxEntries: 2 });
+    store.add({ intent: "3", experience: "3", embedding: [-1, 0], qInit: 0, maxEntries: 2 });
     expect(store.list().length).toBe(2);
   });
 });

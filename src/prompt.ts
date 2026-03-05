@@ -35,6 +35,94 @@ export function truncateText(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}...`;
 }
 
+export function stripConversationMetadata(value: string): string {
+  const marker = "(untrusted metadata):";
+  const text = value.split("\r\n").join("\n");
+  const lines = text.split("\n");
+  const output: string[] = [];
+  let state: "none" | "maybeFence" | "insideFence" = "none";
+
+  const hasFence = (line: string): boolean => line.includes("```");
+  const fenceCount = (line: string): number => {
+    let count = 0;
+    let index = 0;
+    while (true) {
+      const found = line.indexOf("```", index);
+      if (found < 0) {
+        return count;
+      }
+      count += 1;
+      index = found + 3;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine;
+    const lower = line.toLowerCase();
+    const markerIndex = lower.indexOf(marker);
+
+    if (markerIndex >= 0) {
+      const beforeMarker = line.slice(0, markerIndex).trimEnd();
+      const fieldSeparator = beforeMarker.lastIndexOf(":");
+      const preservedPrefix =
+        fieldSeparator >= 0 ? beforeMarker.slice(0, fieldSeparator + 1).trimEnd() : "";
+      if (preservedPrefix.length > 0) {
+        output.push(preservedPrefix);
+      }
+      const rest = line.slice(markerIndex + marker.length);
+      if (hasFence(rest)) {
+        state = fenceCount(rest) >= 2 ? "none" : "insideFence";
+      } else {
+        state = "maybeFence";
+      }
+      continue;
+    }
+
+    if (state === "insideFence") {
+      if (hasFence(line) && fenceCount(line) % 2 === 1) {
+        state = "none";
+      }
+      continue;
+    }
+
+    if (state === "maybeFence") {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      if (trimmed.startsWith("```")) {
+        state = fenceCount(line) >= 2 ? "none" : "insideFence";
+        continue;
+      }
+      state = "none";
+    }
+
+    output.push(line);
+  }
+
+  const compacted: string[] = [];
+  for (const line of output) {
+    const isBlank = line.trim().length === 0;
+    const prevBlank = compacted.length > 0 && compacted[compacted.length - 1]!.trim().length === 0;
+    const prevEndsWithColon =
+      compacted.length > 0 && compacted[compacted.length - 1]!.trimEnd().endsWith(":");
+    if (isBlank && prevBlank) {
+      continue;
+    }
+    if (isBlank && prevEndsWithColon) {
+      continue;
+    }
+    compacted.push(line);
+  }
+  while (compacted.length > 0 && compacted[0]!.trim().length === 0) {
+    compacted.shift();
+  }
+  while (compacted.length > 0 && compacted[compacted.length - 1]!.trim().length === 0) {
+    compacted.pop();
+  }
+  return compacted.join("\n");
+}
+
 export function extractMessageText(message: unknown): string {
   if (!message || typeof message !== "object") {
     return "";

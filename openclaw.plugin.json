@@ -69,6 +69,18 @@
       "label": "Min Reward Confidence",
       "help": "Skip learning updates when reward confidence is below this threshold."
     },
+    "runtime.learnMode": {
+      "label": "Learning Mode",
+      "help": "balanced: prefer tool turns and allow very strong no-tool feedback; tools_only: learn only when tools were called; all: learn from every qualified turn."
+    },
+    "runtime.noToolMinAbsReward": {
+      "label": "No-Tool Min |Reward|",
+      "help": "In balanced mode, no-tool turns must reach this reward magnitude to learn."
+    },
+    "runtime.noToolMinRewardConfidence": {
+      "label": "No-Tool Min Confidence",
+      "help": "In balanced mode, no-tool turns must reach this confidence to learn."
+    },
     "reward.apiKey": {
       "label": "Reward API Key",
       "sensitive": true,
@@ -166,7 +178,13 @@
           "minFeedbackChars": { "type": "number", "minimum": 1, "maximum": 200 },
           "observeTurns": { "type": "number", "minimum": 0, "maximum": 500 },
           "minAbsReward": { "type": "number", "minimum": 0, "maximum": 1 },
-          "minRewardConfidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          "minRewardConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "learnMode": {
+            "type": "string",
+            "enum": ["balanced", "tools_only", "all"]
+          },
+          "noToolMinAbsReward": { "type": "number", "minimum": 0, "maximum": 1 },
+          "noToolMinRewardConfidence": { "type": "number", "minimum": 0, "maximum": 1 }
         }
       },
       "experience": {

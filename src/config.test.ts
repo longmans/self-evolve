@@ -4,9 +4,12 @@ import { selfEvolveConfigSchema } from "./config.js";
 describe("selfEvolveConfigSchema", () => {
   it("provides runtime defaults", () => {
     const parsed = selfEvolveConfigSchema.parse(undefined);
-    expect(parsed.runtime.observeTurns).toBe(3);
+    expect(parsed.runtime.observeTurns).toBe(0);
     expect(parsed.runtime.minAbsReward).toBe(0.15);
     expect(parsed.runtime.minRewardConfidence).toBe(0.55);
+    expect(parsed.runtime.learnMode).toBe("balanced");
+    expect(parsed.runtime.noToolMinAbsReward).toBe(0.8);
+    expect(parsed.runtime.noToolMinRewardConfidence).toBe(0.9);
     expect(parsed.experience.maxToolEvents).toBe(12);
   });
 
@@ -18,6 +21,9 @@ describe("selfEvolveConfigSchema", () => {
         observeTurns: 8,
         minAbsReward: 0.2,
         minRewardConfidence: 0.7,
+        learnMode: "tools_only",
+        noToolMinAbsReward: 0.85,
+        noToolMinRewardConfidence: 0.95,
       },
       experience: {
         maxToolEvents: 8,
@@ -28,6 +34,9 @@ describe("selfEvolveConfigSchema", () => {
     expect(parsed.runtime.minPromptChars).toBe(10);
     expect(parsed.runtime.observeTurns).toBe(8);
     expect(parsed.runtime.minRewardConfidence).toBe(0.7);
+    expect(parsed.runtime.learnMode).toBe("tools_only");
+    expect(parsed.runtime.noToolMinAbsReward).toBe(0.85);
+    expect(parsed.runtime.noToolMinRewardConfidence).toBe(0.95);
     expect(parsed.experience.maxToolEvents).toBe(8);
   });
 });

@@ -53,6 +53,85 @@ function validateTriplet(value: unknown): EpisodicTriplet | null {
   };
 }
 
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, value));
+}
+
+function scoreEntryValue(entry: EpisodicTriplet, now: number): number {
+  const qNorm = clamp01((entry.qValue + 1) / 2);
+  const successRate = clamp01(entry.successCount / Math.max(1, entry.visits));
+  const ageMs = Math.max(0, now - entry.updatedAt);
+  const ageDays = ageMs / 86_400_000;
+  const recency = Math.exp(-ageDays / 30);
+  const usefulness = clamp01(Math.log1p(entry.selectedCount) / Math.log1p(50));
+  return 0.45 * qNorm + 0.2 * successRate + 0.2 * recency + 0.1 * usefulness;
+}
+
+function isRedundant(candidate: EpisodicTriplet, kept: EpisodicTriplet[]): boolean {
+  for (const entry of kept) {
+    if (cosineSimilarity(candidate.embedding, entry.embedding) > 0.92) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pruneByValue(entries: EpisodicTriplet[], maxEntries: number): EpisodicTriplet[] {
+  if (entries.length <= maxEntries) {
+    return entries;
+  }
+  const now = Date.now();
+  const keep: EpisodicTriplet[] = [];
+  const keptIds = new Set<string>();
+
+  // Reserve a small quota for very recent memories so newly learned skills are not starved.
+  const freshQuota = Math.max(1, Math.floor(maxEntries * 0.1));
+  for (const fresh of [...entries].toSorted((left, right) => right.createdAt - left.createdAt)) {
+    if (keep.length >= freshQuota) {
+      break;
+    }
+    if (keptIds.has(fresh.id)) {
+      continue;
+    }
+    keep.push(fresh);
+    keptIds.add(fresh.id);
+  }
+
+  const ranked = [...entries].toSorted(
+    (left, right) => scoreEntryValue(right, now) - scoreEntryValue(left, now),
+  );
+  for (const candidate of ranked) {
+    if (keep.length >= maxEntries) {
+      break;
+    }
+    if (keptIds.has(candidate.id)) {
+      continue;
+    }
+    if (isRedundant(candidate, keep)) {
+      continue;
+    }
+    keep.push(candidate);
+    keptIds.add(candidate.id);
+  }
+
+  // Fallback fill: if de-dup removed too many, fill by value regardless of redundancy.
+  for (const candidate of ranked) {
+    if (keep.length >= maxEntries) {
+      break;
+    }
+    if (keptIds.has(candidate.id)) {
+      continue;
+    }
+    keep.push(candidate);
+    keptIds.add(candidate.id);
+  }
+
+  return keep;
+}
+
 export class EpisodicStore {
   private entries: EpisodicTriplet[] = [];
 
@@ -107,9 +186,7 @@ export class EpisodicStore {
     };
     this.entries.push(triplet);
     if (this.entries.length > params.maxEntries) {
-      this.entries = this.entries
-        .toSorted((left, right) => right.updatedAt - left.updatedAt)
-        .slice(0, params.maxEntries);
+      this.entries = pruneByValue(this.entries, params.maxEntries);
     }
     return triplet;
   }

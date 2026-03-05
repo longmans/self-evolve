@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { zodTextFormat } from "openai/helpers/zod";
+import { z } from "zod";
 import { truncateText } from "./prompt.js";
 import type { SelfEvolveConfig } from "./types.js";
 
@@ -108,18 +110,9 @@ export function buildToolTrace(event: unknown, maxChars: number): ToolTrace {
   };
 }
 
-function parseSummary(raw: string): string | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
-    }
-    const summary = (parsed as Record<string, unknown>).summary;
-    return typeof summary === "string" && summary.trim().length > 0 ? summary.trim() : null;
-  } catch {
-    return null;
-  }
-}
+const ExperienceSummarySchema = z.object({
+  summary: z.string().min(1),
+});
 
 export class ExperienceSummarizer {
   private readonly openaiClient: OpenAI | null;
@@ -144,11 +137,10 @@ export class ExperienceSummarizer {
       toolTrace: input.toolTrace,
     };
     try {
-      const completion = await this.openaiClient.chat.completions.create({
+      const response = await this.openaiClient.responses.parse({
         model: this.config.experience.model,
         temperature: this.config.experience.temperature,
-        response_format: { type: "json_object" },
-        messages: [
+        input: [
           {
             role: "system",
             content:
@@ -159,12 +151,15 @@ export class ExperienceSummarizer {
             content: JSON.stringify(tracePayload),
           },
         ],
+        text: {
+          format: zodTextFormat(ExperienceSummarySchema, "experience_summary"),
+        },
       });
-      const parsed = parseSummary(completion.choices[0]?.message?.content ?? "");
-      if (!parsed) {
+      const parsed = response.output_parsed;
+      if (!parsed?.summary?.trim()) {
         return "";
       }
-      return truncateText(parsed, this.config.experience.maxSummaryChars);
+      return truncateText(parsed.summary.trim(), this.config.experience.maxSummaryChars);
     } catch {
       return "";
     }
