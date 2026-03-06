@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RewardScorer } from "./reward.js";
+import { IntentJudge } from "./intent.js";
 import type { SelfEvolveConfig } from "./types.js";
 
 function config(overrides?: Partial<SelfEvolveConfig["reward"]>): SelfEvolveConfig {
@@ -38,27 +38,28 @@ function config(overrides?: Partial<SelfEvolveConfig["reward"]>): SelfEvolveConf
   };
 }
 
-describe("RewardScorer", () => {
-  it("returns unavailable when no reward model client is configured", async () => {
-    const scorer = new RewardScorer(config());
-    const result = await scorer.score({
-      userFeedback: "works now",
-      intent: "fix issue",
-      assistantResponse: "run command",
-    });
-    expect(result.source).toBe("unavailable");
-    expect(result.score).toBe(0);
-    expect(result.confidence).toBe(0);
+describe("IntentJudge", () => {
+  it("filters short acknowledgement by rule precheck", async () => {
+    const judge = new IntentJudge(config());
+    const result = await judge.judge("很好");
+    expect(result.isMeaningful).toBe(false);
+    expect(result.source).toBe("rule");
+    expect(result.reason).toBe("short-acknowledgement");
   });
 
-  it("returns unavailable for blank feedback", async () => {
-    const scorer = new RewardScorer(config());
-    const result = await scorer.score({
-      userFeedback: "   ",
-      intent: "fix issue",
-      assistantResponse: "run command",
-    });
+  it("filters symbol-only input by rule precheck", async () => {
+    const judge = new IntentJudge(config());
+    const result = await judge.judge("👍👍");
+    expect(result.isMeaningful).toBe(false);
+    expect(result.source).toBe("rule");
+    expect(result.reason).toBe("symbols-or-emoji-only");
+  });
+
+  it("returns unavailable when llm check is required but client is not configured", async () => {
+    const judge = new IntentJudge(config());
+    const result = await judge.judge("请帮我看看/home目录下有哪些文件");
+    expect(result.isMeaningful).toBe(false);
     expect(result.source).toBe("unavailable");
-    expect(result.score).toBe(0);
+    expect(result.reason).toBe("openai-client-unavailable");
   });
 });

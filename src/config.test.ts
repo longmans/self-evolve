@@ -10,6 +10,10 @@ describe("selfEvolveConfigSchema", () => {
     expect(parsed.runtime.learnMode).toBe("balanced");
     expect(parsed.runtime.noToolMinAbsReward).toBe(0.8);
     expect(parsed.runtime.noToolMinRewardConfidence).toBe(0.9);
+    expect(parsed.runtime.newIntentSimilarityThreshold).toBe(0.35);
+    expect(parsed.runtime.idleTurnsToClose).toBe(2);
+    expect(parsed.runtime.pendingTtlMs).toBe(300000);
+    expect(parsed.runtime.maxTurnsPerTask).toBe(5);
     expect(parsed.experience.maxToolEvents).toBe(12);
   });
 
@@ -17,13 +21,16 @@ describe("selfEvolveConfigSchema", () => {
     const parsed = selfEvolveConfigSchema.parse({
       runtime: {
         minPromptChars: 10,
-        minFeedbackChars: 3,
         observeTurns: 8,
         minAbsReward: 0.2,
         minRewardConfidence: 0.7,
         learnMode: "tools_only",
         noToolMinAbsReward: 0.85,
         noToolMinRewardConfidence: 0.95,
+        newIntentSimilarityThreshold: 0.4,
+        idleTurnsToClose: 3,
+        pendingTtlMs: 600000,
+        maxTurnsPerTask: 7,
       },
       experience: {
         maxToolEvents: 8,
@@ -37,6 +44,10 @@ describe("selfEvolveConfigSchema", () => {
     expect(parsed.runtime.learnMode).toBe("tools_only");
     expect(parsed.runtime.noToolMinAbsReward).toBe(0.85);
     expect(parsed.runtime.noToolMinRewardConfidence).toBe(0.95);
+    expect(parsed.runtime.newIntentSimilarityThreshold).toBe(0.4);
+    expect(parsed.runtime.idleTurnsToClose).toBe(3);
+    expect(parsed.runtime.pendingTtlMs).toBe(600000);
+    expect(parsed.runtime.maxTurnsPerTask).toBe(7);
     expect(parsed.experience.maxToolEvents).toBe(8);
   });
 });

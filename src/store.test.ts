@@ -14,13 +14,16 @@ function makeConfig(): SelfEvolveConfig {
     reward: { provider: "openai", model: "gpt-4.1-mini", temperature: 0 },
     runtime: {
       minPromptChars: 6,
-      minFeedbackChars: 2,
       observeTurns: 0,
       minAbsReward: 0,
       minRewardConfidence: 0,
       learnMode: "balanced",
       noToolMinAbsReward: 0.8,
       noToolMinRewardConfidence: 0.9,
+      newIntentSimilarityThreshold: 0.35,
+      idleTurnsToClose: 2,
+      pendingTtlMs: 900000,
+      maxTurnsPerTask: 10,
     },
     experience: {
       summarizer: "openai",

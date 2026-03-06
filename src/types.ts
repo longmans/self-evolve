@@ -39,13 +39,16 @@ export type SelfEvolveConfig = {
   };
   runtime: {
     minPromptChars: number;
-    minFeedbackChars: number;
     observeTurns: number;
     minAbsReward: number;
     minRewardConfidence: number;
     learnMode: LearnMode;
     noToolMinAbsReward: number;
     noToolMinRewardConfidence: number;
+    newIntentSimilarityThreshold: number;
+    idleTurnsToClose: number;
+    pendingTtlMs: number;
+    maxTurnsPerTask: number;
   };
   experience: {
     summarizer: "openai";

@@ -81,6 +81,22 @@
       "label": "No-Tool Min Confidence",
       "help": "In balanced mode, no-tool turns must reach this confidence to learn."
     },
+    "runtime.newIntentSimilarityThreshold": {
+      "label": "New Intent Similarity Threshold",
+      "help": "When a new user prompt similarity is lower than this threshold, close the current task and start a new one."
+    },
+    "runtime.idleTurnsToClose": {
+      "label": "Idle Turns To Close",
+      "help": "Close waiting tasks after N non-feedback idle turns."
+    },
+    "runtime.pendingTtlMs": {
+      "label": "Pending TTL (ms)",
+      "help": "Close pending tasks when no update is observed for this duration."
+    },
+    "runtime.maxTurnsPerTask": {
+      "label": "Max Turns Per Task",
+      "help": "Hard cap of turns accumulated into one learnable task."
+    },
     "reward.apiKey": {
       "label": "Reward API Key",
       "sensitive": true,
@@ -175,7 +191,6 @@
         "additionalProperties": false,
         "properties": {
           "minPromptChars": { "type": "number", "minimum": 1, "maximum": 200 },
-          "minFeedbackChars": { "type": "number", "minimum": 1, "maximum": 200 },
           "observeTurns": { "type": "number", "minimum": 0, "maximum": 500 },
           "minAbsReward": { "type": "number", "minimum": 0, "maximum": 1 },
           "minRewardConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -184,7 +199,11 @@
             "enum": ["balanced", "tools_only", "all"]
           },
           "noToolMinAbsReward": { "type": "number", "minimum": 0, "maximum": 1 },
-          "noToolMinRewardConfidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          "noToolMinRewardConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "newIntentSimilarityThreshold": { "type": "number", "minimum": -1, "maximum": 1 },
+          "idleTurnsToClose": { "type": "number", "minimum": 0, "maximum": 20 },
+          "pendingTtlMs": { "type": "number", "minimum": 1000, "maximum": 86400000 },
+          "maxTurnsPerTask": { "type": "number", "minimum": 1, "maximum": 100 }
         }
       },
       "experience": {

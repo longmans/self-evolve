@@ -33,13 +33,16 @@ const DEFAULT_CONFIG: SelfEvolveConfig = {
   },
   runtime: {
     minPromptChars: 6,
-    minFeedbackChars: 2,
     observeTurns: 0,
     minAbsReward: 0.15,
     minRewardConfidence: 0.55,
     learnMode: "balanced",
     noToolMinAbsReward: 0.8,
     noToolMinRewardConfidence: 0.9,
+    newIntentSimilarityThreshold: 0.35,
+    idleTurnsToClose: 2,
+    pendingTtlMs: 300_000,
+    maxTurnsPerTask: 5,
   },
   experience: {
     summarizer: "openai",
@@ -254,15 +257,6 @@ export const selfEvolveConfigSchema = {
             200,
           ),
         ),
-        minFeedbackChars: Math.floor(
-          readNumber(
-            runtimeRaw,
-            "minFeedbackChars",
-            DEFAULT_CONFIG.runtime.minFeedbackChars,
-            1,
-            200,
-          ),
-        ),
         observeTurns: Math.floor(
           readNumber(runtimeRaw, "observeTurns", DEFAULT_CONFIG.runtime.observeTurns, 0, 500),
         ),
@@ -299,6 +293,40 @@ export const selfEvolveConfigSchema = {
           DEFAULT_CONFIG.runtime.noToolMinRewardConfidence,
           0,
           1,
+        ),
+        newIntentSimilarityThreshold: readNumber(
+          runtimeRaw,
+          "newIntentSimilarityThreshold",
+          DEFAULT_CONFIG.runtime.newIntentSimilarityThreshold,
+          -1,
+          1,
+        ),
+        idleTurnsToClose: Math.floor(
+          readNumber(
+            runtimeRaw,
+            "idleTurnsToClose",
+            DEFAULT_CONFIG.runtime.idleTurnsToClose,
+            0,
+            20,
+          ),
+        ),
+        pendingTtlMs: Math.floor(
+          readNumber(
+            runtimeRaw,
+            "pendingTtlMs",
+            DEFAULT_CONFIG.runtime.pendingTtlMs,
+            1_000,
+            86_400_000,
+          ),
+        ),
+        maxTurnsPerTask: Math.floor(
+          readNumber(
+            runtimeRaw,
+            "maxTurnsPerTask",
+            DEFAULT_CONFIG.runtime.maxTurnsPerTask,
+            1,
+            100,
+          ),
         ),
       },
       experience: {

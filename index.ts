@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { selfEvolveConfigSchema } from "./src/config.js";
@@ -9,6 +10,7 @@ import {
   type LlmTrace,
   type ToolTrace,
 } from "./src/experience.js";
+import { IntentJudge } from "./src/intent.js";
 import { selectPhaseB } from "./src/policy.js";
 import {
   buildMemRLContext,
@@ -20,17 +22,41 @@ import { RewardScorer } from "./src/reward.js";
 import { EpisodicStore } from "./src/store.js";
 import type { ScoredCandidate } from "./src/types.js";
 
-type PendingTurn = {
+type TaskState = "open" | "waiting_feedback";
+
+type TaskTurn = {
+  id: string;
+  turnIndex: number;
   prompt: string;
   queryEmbedding: number[];
   selected: ScoredCandidate[];
   assistantResponse?: string;
-  turnIndex: number;
   toolTrace: ToolTrace[];
   llmTrace?: LlmTrace;
   runId?: string;
   createdAt: number;
 };
+
+type PendingTask = {
+  id: string;
+  intent: string;
+  intentEmbedding: number[];
+  turnStart: number;
+  turns: TaskTurn[];
+  state: TaskState;
+  idleTurns: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+const EXPLICIT_FEEDBACK_PATTERNS = [
+  /\b(thanks|thank you|great|good job|works|worked|fixed|resolved|perfect)\b/i,
+  /\b(wrong|bad|failed|still broken|doesn'?t work|not working|error)\b/i,
+  /(谢谢|很好|不错|可以了|解决了|搞定了|不对|没解决|不行|还是不行|有问题|报错|失败)/,
+];
+const FEEDBACK_EMOJIS = new Set(["👍", "👎", "✅", "❌", "👌", "🙏"]);
+const FEEDBACK_SCORE_THRESHOLD = 0.2;
+const FEEDBACK_CONFIDENCE_THRESHOLD = 0.5;
 
 function resolveSessionKey(ctx: { sessionKey?: string; sessionId?: string }): string {
   return ctx.sessionKey ?? ctx.sessionId ?? "global";
@@ -59,6 +85,79 @@ function shouldTriggerRetrieval(prompt: string, minPromptChars: number): boolean
     "good",
   ]);
   return !nonLearnable.has(normalized);
+}
+
+function isOnlySymbolsOrEmoji(text: string): boolean {
+  if (text.trim().length === 0) {
+    return true;
+  }
+  return !/[\p{L}\p{N}]/u.test(text);
+}
+
+function isExplicitFeedback(text: string): boolean {
+  const cleaned = stripConversationMetadata(text).trim();
+  if (!cleaned) {
+    return false;
+  }
+  if (isOnlySymbolsOrEmoji(cleaned)) {
+    const normalized = cleaned.replace(/\uFE0F/g, "").replace(/\s+/g, "");
+    if (!normalized) {
+      return false;
+    }
+    for (const char of [...normalized]) {
+      if (!FEEDBACK_EMOJIS.has(char)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  for (const pattern of EXPLICIT_FEEDBACK_PATTERNS) {
+    if (pattern.test(cleaned)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isLikelyNewRequest(text: string): boolean {
+  const cleaned = stripConversationMetadata(text).trim().toLowerCase();
+  if (!cleaned) {
+    return false;
+  }
+  if (cleaned.includes("?") || cleaned.includes("？")) {
+    return true;
+  }
+  const starters = [
+    "帮我",
+    "请",
+    "请你",
+    "how ",
+    "what ",
+    "why ",
+    "can you",
+    "could you",
+    "show me",
+    "list ",
+  ];
+  return starters.some((prefix) => cleaned.startsWith(prefix));
+}
+
+function cosineSimilarity(left: number[], right: number[]): number {
+  if (left.length === 0 || right.length === 0 || left.length !== right.length) {
+    return 0;
+  }
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    dot += left[index] * right[index];
+    leftNorm += left[index] * left[index];
+    rightNorm += right[index] * right[index];
+  }
+  if (leftNorm <= 0 || rightNorm <= 0) {
+    return 0;
+  }
+  return dot / Math.sqrt(leftNorm * rightNorm);
 }
 
 function debugLog(
@@ -95,6 +194,45 @@ function passLearnModeGate(params: {
     : { pass: false, reason: "mode-balanced-no-tools-low-confidence" };
 }
 
+function gatherSelectedMemoryIds(task: PendingTask): string[] {
+  const ids = new Set<string>();
+  for (const turn of task.turns) {
+    for (const selected of turn.selected) {
+      ids.add(selected.triplet.id);
+    }
+  }
+  return [...ids];
+}
+
+function gatherToolTrace(task: PendingTask, maxToolEvents: number): ToolTrace[] {
+  const merged: ToolTrace[] = [];
+  for (const turn of task.turns) {
+    for (const event of turn.toolTrace) {
+      merged.push(event);
+    }
+  }
+  if (merged.length <= maxToolEvents) {
+    return merged;
+  }
+  return merged.slice(-maxToolEvents);
+}
+
+function lastLlmTrace(task: PendingTask): LlmTrace | undefined {
+  for (let index = task.turns.length - 1; index >= 0; index -= 1) {
+    if (task.turns[index].llmTrace) {
+      return task.turns[index].llmTrace;
+    }
+  }
+  return undefined;
+}
+
+function collectAssistantResponse(task: PendingTask, maxChars: number): string {
+  const chunks = task.turns
+    .map((turn) => turn.assistantResponse?.trim() ?? "")
+    .filter((value) => value.length > 0);
+  return truncateText(chunks.join("\n\n"), maxChars);
+}
+
 const plugin = {
   id: "self-evolve",
   name: "Self Evolve",
@@ -104,84 +242,104 @@ const plugin = {
     const config = selfEvolveConfigSchema.parse(api.pluginConfig);
     const adapter = createEmbeddingAdapter(config);
     const rewardScorer = new RewardScorer(config);
+    const intentJudge = new IntentJudge(config);
     const experienceSummarizer = new ExperienceSummarizer(config);
     const stateDir = api.runtime.state.resolveStateDir();
     const stateFile =
       config.memory.stateFile ?? join(stateDir, "plugins", "self-evolve", "episodic-memory.json");
     const store = new EpisodicStore(stateFile);
     const ready = store.load();
-    const pendingBySession = new Map<string, PendingTurn>();
+    const pendingBySession = new Map<string, PendingTask>();
     const sessionByRunId = new Map<string, string>();
     const turnBySession = new Map<string, number>();
 
-    function setPending(sessionKey: string, pending: PendingTurn): void {
+    function setPending(sessionKey: string, task: PendingTask): void {
       const previous = pendingBySession.get(sessionKey);
-      if (previous?.runId) {
-        sessionByRunId.delete(previous.runId);
+      if (previous) {
+        for (const turn of previous.turns) {
+          if (turn.runId) {
+            sessionByRunId.delete(turn.runId);
+          }
+        }
       }
-      pendingBySession.set(sessionKey, pending);
-      if (pending.runId) {
-        sessionByRunId.set(pending.runId, sessionKey);
+      pendingBySession.set(sessionKey, task);
+      for (const turn of task.turns) {
+        if (turn.runId) {
+          sessionByRunId.set(turn.runId, sessionKey);
+        }
       }
     }
 
     function deletePending(sessionKey: string): void {
       const previous = pendingBySession.get(sessionKey);
-      if (previous?.runId) {
-        sessionByRunId.delete(previous.runId);
+      if (previous) {
+        for (const turn of previous.turns) {
+          if (turn.runId) {
+            sessionByRunId.delete(turn.runId);
+          }
+        }
       }
       pendingBySession.delete(sessionKey);
     }
 
     function findPending(params: { sessionKey: string; runId?: string }): {
       sessionKey: string;
-      pending: PendingTurn;
+      task: PendingTask;
     } | null {
       if (params.runId) {
         const mappedSession = sessionByRunId.get(params.runId);
         if (mappedSession) {
-          const pending = pendingBySession.get(mappedSession);
-          if (pending) {
-            return { sessionKey: mappedSession, pending };
+          const task = pendingBySession.get(mappedSession);
+          if (task) {
+            return { sessionKey: mappedSession, task };
           }
         }
       }
 
       const bySession = pendingBySession.get(params.sessionKey);
       if (bySession) {
-        if (params.runId && bySession.runId !== params.runId) {
-          setPending(params.sessionKey, { ...bySession, runId: params.runId });
-        }
-        return { sessionKey: params.sessionKey, pending: pendingBySession.get(params.sessionKey)! };
+        return { sessionKey: params.sessionKey, task: bySession };
       }
 
-      if (params.runId) {
-        for (const [sessionKey, pending] of pendingBySession.entries()) {
-          if (pending.runId === params.runId) {
-            return { sessionKey, pending };
-          }
-        }
+      if (params.sessionKey === "global" && pendingBySession.size === 1) {
+        const [fallbackSession, task] = pendingBySession.entries().next().value as [string, PendingTask];
+        return { sessionKey: fallbackSession, task };
       }
 
       return null;
     }
 
-    debugLog(
-      api.logger,
-      `config loaded retrieval(k1=${config.retrieval.k1},k2=${config.retrieval.k2},delta=${config.retrieval.delta},tau=${config.retrieval.tau},lambda=${config.retrieval.lambda}) runtime(observeTurns=${config.runtime.observeTurns},minAbsReward=${config.runtime.minAbsReward},minRewardConfidence=${config.runtime.minRewardConfidence})`,
-    );
+    function findTurn(task: PendingTask, runId?: string): TaskTurn | null {
+      if (runId) {
+        const exact = task.turns.find((turn) => turn.runId === runId);
+        if (exact) {
+          return exact;
+        }
+      }
+      if (task.turns.length === 0) {
+        return null;
+      }
+      return task.turns[task.turns.length - 1];
+    }
 
-    async function finalizePendingWithReward(params: {
-      pending: PendingTurn;
+    async function finalizeTaskWithReward(params: {
+      task: PendingTask;
       reward: number;
       feedbackText: string;
     }): Promise<void> {
+      const selectedIds = gatherSelectedMemoryIds(params.task);
+      const toolTrace = gatherToolTrace(params.task, config.experience.maxToolEvents);
+      const llmTrace = lastLlmTrace(params.task);
+      const assistantResponse = collectAssistantResponse(params.task, config.memory.maxExperienceChars);
+      const cleanedIntent = stripConversationMetadata(params.task.intent);
+
       debugLog(
         api.logger,
-        `learning start turn=${params.pending.turnIndex} selected=${params.pending.selected.length} reward=${params.reward.toFixed(3)} feedbackChars=${params.feedbackText.length}`,
+        `learning start task=${params.task.id.slice(0, 8)} turns=${params.task.turns.length} selected=${selectedIds.length} reward=${params.reward.toFixed(3)} feedbackChars=${params.feedbackText.length}`,
       );
+
       store.updateQ({
-        memoryIds: params.pending.selected.map((item) => item.triplet.id),
+        memoryIds: selectedIds,
         reward: params.reward,
         alpha: config.learning.alpha,
         gamma: config.learning.gamma,
@@ -189,27 +347,38 @@ const plugin = {
       });
 
       if (params.reward > 0 || config.memory.includeFailures) {
+        const intentDecision = await intentJudge.judge(cleanedIntent);
+        if (!intentDecision.isMeaningful) {
+          debugLog(
+            api.logger,
+            `memory append skipped reason=intent-not-meaningful source=${intentDecision.source} confidence=${intentDecision.confidence.toFixed(3)} detail=${intentDecision.reason}`,
+          );
+          await store.save();
+          debugLog(api.logger, "learning persisted to episodic store");
+          return;
+        }
+
         const summary = await experienceSummarizer.summarize({
-          intent: params.pending.prompt,
-          assistantResponse: params.pending.assistantResponse ?? "",
+          intent: cleanedIntent,
+          assistantResponse,
           userFeedback: params.feedbackText,
           reward: params.reward,
-          llmTrace: params.pending.llmTrace,
-          toolTrace: params.pending.toolTrace,
+          llmTrace,
+          toolTrace,
         });
         const rawTrace = experienceSummarizer.formatRawTrace({
-          intent: params.pending.prompt,
-          assistantResponse: params.pending.assistantResponse ?? "",
+          intent: cleanedIntent,
+          assistantResponse,
           userFeedback: params.feedbackText,
           reward: params.reward,
-          llmTrace: params.pending.llmTrace,
-          toolTrace: params.pending.toolTrace,
+          llmTrace,
+          toolTrace,
         });
         const cleanedExperience = stripConversationMetadata(
           [
-            `intent: ${params.pending.prompt}`,
+            `intent: ${cleanedIntent}`,
             `summary: ${summary}`,
-            `assistant: ${params.pending.assistantResponse ?? ""}`,
+            `assistant: ${assistantResponse}`,
             `user_feedback: ${params.feedbackText}`,
             `reward: ${params.reward.toFixed(3)}`,
             `raw_trace_json: ${rawTrace}`,
@@ -218,20 +387,103 @@ const plugin = {
             .trim(),
         );
         store.add({
-          intent: params.pending.prompt,
+          intent: cleanedIntent,
           experience: truncateText(cleanedExperience, config.memory.maxExperienceChars),
-          embedding: params.pending.queryEmbedding,
+          embedding: params.task.intentEmbedding,
           qInit: config.learning.qInit,
           maxEntries: config.memory.maxEntries,
         });
         debugLog(
           api.logger,
-          `memory append summaryChars=${summary.length} rawTraceChars=${rawTrace.length} toolEvents=${params.pending.toolTrace.length} reasoningSignals=${params.pending.llmTrace?.reasoningSignals.length ?? 0}`,
+          `memory append task=${params.task.id.slice(0, 8)} summaryChars=${summary.length} rawTraceChars=${rawTrace.length} toolEvents=${toolTrace.length} reasoningSignals=${llmTrace?.reasoningSignals.length ?? 0} intentJudge=${intentDecision.source}:${intentDecision.confidence.toFixed(3)}`,
         );
       }
+
       await store.save();
       debugLog(api.logger, "learning persisted to episodic store");
     }
+
+    async function maybeLearnOnFeedback(params: {
+      task: PendingTask;
+      feedbackText: string;
+      explicitFeedback: boolean;
+    }): Promise<{
+      feedbackDetected: boolean;
+      shouldLearn: boolean;
+      skipReason: string;
+      reward: number;
+    }> {
+      const cleanedFeedback = stripConversationMetadata(params.feedbackText);
+      const assistantResponse = collectAssistantResponse(params.task, config.memory.maxExperienceChars);
+      const scored = await rewardScorer.score({
+        userFeedback: cleanedFeedback,
+        intent: stripConversationMetadata(params.task.intent),
+        assistantResponse,
+      });
+      const feedbackDetected =
+        params.explicitFeedback ||
+        (scored.source === "openai" &&
+          scored.confidence >= FEEDBACK_CONFIDENCE_THRESHOLD &&
+          Math.abs(scored.score) >= FEEDBACK_SCORE_THRESHOLD);
+
+      let shouldLearn = false;
+      let skipReason = "feedback-not-detected";
+      const pastObserveWindow = params.task.turnStart > config.runtime.observeTurns;
+      const passRewardGate =
+        feedbackDetected &&
+        pastObserveWindow &&
+        Math.abs(scored.score) >= config.runtime.minAbsReward &&
+        scored.confidence >= config.runtime.minRewardConfidence;
+
+      if (passRewardGate) {
+        const modeGate = passLearnModeGate({
+          hasToolTrace: gatherToolTrace(params.task, config.experience.maxToolEvents).length > 0,
+          scoreAbs: Math.abs(scored.score),
+          confidence: scored.confidence,
+          mode: config.runtime.learnMode,
+          noToolMinAbsReward: config.runtime.noToolMinAbsReward,
+          noToolMinRewardConfidence: config.runtime.noToolMinRewardConfidence,
+        });
+        shouldLearn = modeGate.pass;
+        skipReason = modeGate.reason;
+      }
+
+      if (!pastObserveWindow) {
+        skipReason = "observe-window";
+      } else if (!feedbackDetected) {
+        skipReason = "feedback-not-detected";
+      } else if (Math.abs(scored.score) < config.runtime.minAbsReward) {
+        skipReason = "reward-magnitude";
+      } else if (scored.confidence < config.runtime.minRewardConfidence) {
+        skipReason = "reward-confidence";
+      } else if (shouldLearn && !skipReason.startsWith("mode-")) {
+        skipReason = "none";
+      }
+
+      api.logger.info(
+        `self-evolve: feedback scored score=${scored.score.toFixed(3)} confidence=${scored.confidence.toFixed(3)} source=${scored.source}${scored.source === "unavailable" ? ` unavailableReason=${scored.unavailableReason ?? "unknown"}` : ""} feedbackDetected=${String(feedbackDetected)} learn=${String(shouldLearn)}`,
+      );
+
+      if (shouldLearn) {
+        await finalizeTaskWithReward({
+          task: params.task,
+          reward: scored.score,
+          feedbackText: cleanedFeedback,
+        });
+      } else {
+        debugLog(
+          api.logger,
+          `learning skipped task=${params.task.id.slice(0, 8)} turns=${params.task.turns.length} reason=${skipReason}`,
+        );
+      }
+
+      return { feedbackDetected, shouldLearn, skipReason, reward: scored.score };
+    }
+
+    debugLog(
+      api.logger,
+      `config loaded retrieval(k1=${config.retrieval.k1},k2=${config.retrieval.k2},delta=${config.retrieval.delta},tau=${config.retrieval.tau},lambda=${config.retrieval.lambda}) runtime(observeTurns=${config.runtime.observeTurns},minAbsReward=${config.runtime.minAbsReward},minRewardConfidence=${config.runtime.minRewardConfidence},newIntentSimilarityThreshold=${config.runtime.newIntentSimilarityThreshold},idleTurnsToClose=${config.runtime.idleTurnsToClose},pendingTtlMs=${config.runtime.pendingTtlMs},maxTurnsPerTask=${config.runtime.maxTurnsPerTask})`,
+    );
 
     api.logger.info(
       `self-evolve: initialized (embedder=${adapter.name}, k1=${config.retrieval.k1}, k2=${config.retrieval.k2})`,
@@ -241,6 +493,7 @@ const plugin = {
       const prompt = stripConversationMetadata(event.prompt?.trim() ?? "");
       await ready;
       const sessionKey = resolveSessionKey(ctx);
+      const now = Date.now();
       const currentTurn = (turnBySession.get(sessionKey) ?? 0) + 1;
       turnBySession.set(sessionKey, currentTurn);
       debugLog(
@@ -248,61 +501,89 @@ const plugin = {
         `hook before_prompt_build session=${sessionKey} turn=${currentTurn} promptChars=${prompt.length}`,
       );
 
-      const previousPending = pendingBySession.get(sessionKey);
-      if (previousPending) {
-        let shouldLearn = false;
-        let skipReason = "no-feedback";
-        const cleanedIntent = stripConversationMetadata(previousPending.prompt);
-        const cleanedFeedback = stripConversationMetadata(prompt);
-        const scored = await rewardScorer.score({
-          userFeedback: cleanedFeedback,
-          intent: cleanedIntent,
-          assistantResponse: previousPending.assistantResponse ?? "",
-        });
-        const pastObserveWindow = previousPending.turnIndex > config.runtime.observeTurns;
-        const passRewardGate =
-          pastObserveWindow &&
-          Math.abs(scored.score) >= config.runtime.minAbsReward &&
-          scored.confidence >= config.runtime.minRewardConfidence;
-        if (!passRewardGate) {
-          shouldLearn = false;
-        } else {
-          const modeGate = passLearnModeGate({
-            hasToolTrace: previousPending.toolTrace.length > 0,
-            scoreAbs: Math.abs(scored.score),
-            confidence: scored.confidence,
-            mode: config.runtime.learnMode,
-            noToolMinAbsReward: config.runtime.noToolMinAbsReward,
-            noToolMinRewardConfidence: config.runtime.noToolMinRewardConfidence,
-          });
-          shouldLearn = modeGate.pass;
-          skipReason = modeGate.reason;
+      const existingTask = pendingBySession.get(sessionKey);
+      let precomputedEmbedding: number[] | null = null;
+
+      if (existingTask) {
+        if (now - existingTask.updatedAt > config.runtime.pendingTtlMs) {
+          debugLog(
+            api.logger,
+            `task closed reason=ttl task=${existingTask.id.slice(0, 8)} ageMs=${now - existingTask.updatedAt}`,
+          );
+          deletePending(sessionKey);
+        } else if (existingTask.turns.length >= config.runtime.maxTurnsPerTask) {
+          debugLog(
+            api.logger,
+            `task closed reason=max-turns task=${existingTask.id.slice(0, 8)} turns=${existingTask.turns.length}`,
+          );
+          deletePending(sessionKey);
         }
-        if (!pastObserveWindow) {
-          skipReason = "observe-window";
-        } else if (Math.abs(scored.score) < config.runtime.minAbsReward) {
-          skipReason = "reward-magnitude";
-        } else if (scored.confidence < config.runtime.minRewardConfidence) {
-          skipReason = "reward-confidence";
-        } else if (shouldLearn && skipReason.startsWith("mode-")) {
-          // keep mode pass reason for diagnostics
-        } else if (shouldLearn) {
-          skipReason = "none";
+      }
+
+      const activeTask = pendingBySession.get(sessionKey);
+      if (activeTask) {
+        if (activeTask.state === "waiting_feedback") {
+          const explicitFeedback = isExplicitFeedback(prompt);
+          const likelyNewRequest = isLikelyNewRequest(prompt);
+          if (!likelyNewRequest) {
+            const feedbackResult = await maybeLearnOnFeedback({
+              task: activeTask,
+              feedbackText: prompt,
+              explicitFeedback,
+            });
+            if (feedbackResult.feedbackDetected) {
+              deletePending(sessionKey);
+              if (!shouldTriggerRetrieval(prompt, config.runtime.minPromptChars)) {
+                debugLog(api.logger, "retrieval skipped by trigger gate");
+                return;
+              }
+            }
+          }
+
+          if (pendingBySession.get(sessionKey)?.state === "waiting_feedback") {
+            if (likelyNewRequest) {
+              debugLog(api.logger, "feedback detection skipped reason=likely-new-request");
+            }
+
+          if (!shouldTriggerRetrieval(prompt, config.runtime.minPromptChars)) {
+            const nextIdle = activeTask.idleTurns + 1;
+            if (nextIdle >= config.runtime.idleTurnsToClose) {
+              debugLog(
+                api.logger,
+                `task closed reason=idle task=${activeTask.id.slice(0, 8)} idleTurns=${nextIdle}`,
+              );
+              deletePending(sessionKey);
+            } else {
+              setPending(sessionKey, {
+                ...activeTask,
+                idleTurns: nextIdle,
+                updatedAt: now,
+              });
+            }
+            debugLog(api.logger, "retrieval skipped by trigger gate");
+            return;
+          }
+
+          precomputedEmbedding = await adapter.embed(prompt);
+          if (precomputedEmbedding.length > 0) {
+            const sim = cosineSimilarity(precomputedEmbedding, activeTask.intentEmbedding);
+            if (sim < config.runtime.newIntentSimilarityThreshold) {
+              debugLog(
+                api.logger,
+                `task closed reason=new-intent task=${activeTask.id.slice(0, 8)} similarity=${sim.toFixed(3)} threshold=${config.runtime.newIntentSimilarityThreshold.toFixed(3)}`,
+              );
+              deletePending(sessionKey);
+            } else {
+              setPending(sessionKey, {
+                ...activeTask,
+                state: "open",
+                idleTurns: 0,
+                updatedAt: now,
+              });
+            }
+          }
+          }
         }
-        api.logger.info(
-          `self-evolve: feedback scored score=${scored.score.toFixed(3)} confidence=${scored.confidence.toFixed(3)} source=${scored.source}${scored.source === "unavailable" ? ` unavailableReason=${scored.unavailableReason ?? "unknown"}` : ""} learn=${String(shouldLearn)}`,
-        );
-        if (shouldLearn) {
-          await finalizePendingWithReward({
-            pending: previousPending,
-            reward: scored.score,
-            feedbackText: cleanedFeedback,
-          });
-        }
-        if (!shouldLearn) {
-          debugLog(api.logger, `learning skipped turn=${previousPending.turnIndex} reason=${skipReason}`);
-        }
-        deletePending(sessionKey);
       }
 
       if (!shouldTriggerRetrieval(prompt, config.runtime.minPromptChars)) {
@@ -310,12 +591,13 @@ const plugin = {
         return;
       }
 
-      const queryEmbedding = await adapter.embed(prompt);
+      const queryEmbedding = precomputedEmbedding ?? (await adapter.embed(prompt));
       if (queryEmbedding.length === 0) {
         debugLog(api.logger, "retrieval skipped due to empty embedding");
         return;
       }
       debugLog(api.logger, `embedding created dims=${queryEmbedding.length}`);
+
       const candidates = store.search(queryEmbedding, config);
       debugLog(api.logger, `phase-a candidates=${candidates.length}`);
       const phaseB = selectPhaseB({ candidates, config });
@@ -323,33 +605,45 @@ const plugin = {
         api.logger,
         `phase-b scored=${phaseB.scored.length} selected=${phaseB.selected.length} simMax=${phaseB.simMax.toFixed(3)}`,
       );
-      if (phaseB.selected.length === 0) {
-        // Bootstrap path: even without retrieved memories, keep this turn as pending so
-        // the next user feedback can still create a new episodic memory entry.
-        setPending(sessionKey, {
-          prompt,
-          queryEmbedding,
-          selected: [],
-          turnIndex: currentTurn,
-          toolTrace: [],
-          createdAt: Date.now(),
-        });
-        debugLog(api.logger, "retrieval returned null action; pending created for bootstrap learning");
-        return;
-      }
 
-      setPending(sessionKey, {
+      const currentTask = pendingBySession.get(sessionKey);
+      const nextTask: PendingTask =
+        currentTask ?? {
+          id: randomUUID(),
+          intent: prompt,
+          intentEmbedding: queryEmbedding,
+          turnStart: currentTurn,
+          turns: [],
+          state: "open",
+          idleTurns: 0,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+      const turn: TaskTurn = {
+        id: randomUUID(),
+        turnIndex: currentTurn,
         prompt,
         queryEmbedding,
         selected: phaseB.selected,
-        turnIndex: currentTurn,
         toolTrace: [],
-        createdAt: Date.now(),
-      });
+        createdAt: now,
+      };
+      nextTask.turns = [...nextTask.turns, turn];
+      nextTask.state = "open";
+      nextTask.idleTurns = 0;
+      nextTask.updatedAt = now;
+      setPending(sessionKey, nextTask);
+
       debugLog(
         api.logger,
-        `pending created selectedIds=${phaseB.selected.map((item) => item.triplet.id.slice(0, 8)).join(",")}`,
+        `pending created task=${nextTask.id.slice(0, 8)} turns=${nextTask.turns.length} selectedIds=${phaseB.selected.map((item) => item.triplet.id.slice(0, 8)).join(",") || "none"}`,
       );
+
+      if (phaseB.selected.length === 0) {
+        debugLog(api.logger, "retrieval returned null action; pending kept for task-level learning");
+        return;
+      }
 
       const prependContext = buildMemRLContext(phaseB.selected);
       debugLog(
@@ -366,10 +660,16 @@ const plugin = {
       const sessionKey = resolveSessionKey(ctx);
       const matched = findPending({ sessionKey });
       if (!matched) {
-        debugLog(api.logger, "agent_end skipped: no pending turn");
+        debugLog(api.logger, "agent_end skipped: no pending task");
         return;
       }
-      const pending = matched.pending;
+
+      const task = matched.task;
+      const turn = findTurn(task);
+      if (!turn) {
+        debugLog(api.logger, "agent_end skipped: task has no turn");
+        return;
+      }
 
       const messages = Array.isArray(event.messages) ? event.messages : [];
       const assistantText = [...messages]
@@ -380,17 +680,21 @@ const plugin = {
           }
           return (message as Record<string, unknown>).role === "assistant";
         });
+      const assistantContent = truncateText(
+        extractMessageText(assistantText),
+        config.memory.maxExperienceChars,
+      );
+      turn.assistantResponse = assistantContent;
 
       setPending(matched.sessionKey, {
-        ...pending,
-        assistantResponse: truncateText(
-          extractMessageText(assistantText),
-          config.memory.maxExperienceChars,
-        ),
+        ...task,
+        state: "waiting_feedback",
+        updatedAt: Date.now(),
       });
+
       debugLog(
         api.logger,
-        `agent_end captured assistantChars=${extractMessageText(assistantText).length} success=${String(event.success)}`,
+        `agent_end captured task=${task.id.slice(0, 8)} assistantChars=${assistantContent.length} success=${String(event.success)}`,
       );
     });
 
@@ -404,13 +708,22 @@ const plugin = {
         );
         return;
       }
+      const task = matched.task;
+      const turn = findTurn(task, event.runId);
+      if (!turn) {
+        debugLog(api.logger, `llm_output skipped: no turn for session=${matched.sessionKey}`);
+        return;
+      }
+      turn.runId = event.runId;
+      turn.llmTrace = buildLlmTrace(event, config.experience.maxRawChars);
+      sessionByRunId.set(event.runId, matched.sessionKey);
       setPending(matched.sessionKey, {
-        ...matched.pending,
-        llmTrace: buildLlmTrace(event, config.experience.maxRawChars),
+        ...task,
+        updatedAt: Date.now(),
       });
       debugLog(
         api.logger,
-        `llm_output captured session=${matched.sessionKey} runId=${event.runId} provider=${event.provider} model=${event.model} assistantTexts=${event.assistantTexts.length}`,
+        `llm_output captured session=${matched.sessionKey} task=${task.id.slice(0, 8)} runId=${event.runId} provider=${event.provider} model=${event.model} assistantTexts=${event.assistantTexts.length}`,
       );
     });
 
@@ -424,16 +737,28 @@ const plugin = {
         );
         return;
       }
-      const nextTrace = [...matched.pending.toolTrace, buildToolTrace(event, config.experience.maxRawChars)].slice(
+
+      const task = matched.task;
+      const turn = findTurn(task, event.runId);
+      if (!turn) {
+        debugLog(api.logger, `tool trace skipped: no turn for session=${matched.sessionKey}`);
+        return;
+      }
+
+      if (event.runId) {
+        turn.runId = event.runId;
+        sessionByRunId.set(event.runId, matched.sessionKey);
+      }
+      turn.toolTrace = [...turn.toolTrace, buildToolTrace(event, config.experience.maxRawChars)].slice(
         -config.experience.maxToolEvents,
       );
       setPending(matched.sessionKey, {
-        ...matched.pending,
-        toolTrace: nextTrace,
+        ...task,
+        updatedAt: Date.now(),
       });
       debugLog(
         api.logger,
-        `tool trace append session=${matched.sessionKey} runId=${event.runId ?? "unknown"} tool=${event.toolName} hasError=${String(Boolean(event.error))} durationMs=${event.durationMs ?? 0} toolEvents=${nextTrace.length}`,
+        `tool trace append session=${matched.sessionKey} task=${task.id.slice(0, 8)} runId=${event.runId ?? "unknown"} tool=${event.toolName} hasError=${String(Boolean(event.error))} durationMs=${event.durationMs ?? 0} turnToolEvents=${turn.toolTrace.length}`,
       );
     });
 
