@@ -6,6 +6,7 @@ import { createEmbeddingAdapter } from "./src/embedding.js";
 import {
   buildLlmTrace,
   buildToolTrace,
+  composeExperience,
   ExperienceSummarizer,
   type LlmTrace,
   type ToolTrace,
@@ -15,6 +16,7 @@ import { selectPhaseB } from "./src/policy.js";
 import {
   buildMemRLContext,
   extractMessageText,
+  sanitizeMemoryText,
   stripConversationMetadata,
   truncateText,
 } from "./src/prompt.js";
@@ -167,6 +169,15 @@ function debugLog(
   logger.debug?.(`[self-evolve] ${message}`);
 }
 
+function oneLineForLog(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function passLearnModeGate(params: {
   hasToolTrace: boolean;
   scoreAbs: number;
@@ -231,6 +242,43 @@ function collectAssistantResponse(task: PendingTask, maxChars: number): string {
     .map((turn) => turn.assistantResponse?.trim() ?? "")
     .filter((value) => value.length > 0);
   return truncateText(chunks.join("\n\n"), maxChars);
+}
+
+function buildToolSignals(toolTrace: ToolTrace[]): {
+  toolCalls: number;
+  toolFailures: number;
+  toolSuccessRate: number;
+  hasToolError: boolean;
+} {
+  const toolCalls = toolTrace.length;
+  const toolFailures = toolTrace.filter((event) => Boolean(event.error)).length;
+  const hasToolError = toolFailures > 0;
+  const toolSuccessRate = toolCalls === 0 ? 1 : (toolCalls - toolFailures) / toolCalls;
+  return { toolCalls, toolFailures, toolSuccessRate, hasToolError };
+}
+
+function buildActionPath(toolTrace: ToolTrace[], assistantResponse: string, maxChars: number): string {
+  if (toolTrace.length === 0) {
+    return truncateText(
+      assistantResponse.trim().length > 0 ? "assistant_direct_response" : "no_action_captured",
+      maxChars,
+    );
+  }
+  const steps = toolTrace.map((event) => `${event.toolName}:${event.error ? "error" : "ok"}`);
+  return truncateText(steps.join(" -> "), maxChars);
+}
+
+function buildToolOutcomeSummary(
+  toolSignals: { toolCalls: number; toolFailures: number; toolSuccessRate: number; hasToolError: boolean },
+  maxChars: number,
+): string {
+  if (toolSignals.toolCalls === 0) {
+    return "no_tool_calls";
+  }
+  return truncateText(
+    `calls=${toolSignals.toolCalls}, failures=${toolSignals.toolFailures}, success_rate=${toolSignals.toolSuccessRate.toFixed(3)}, has_error=${String(toolSignals.hasToolError)}`,
+    maxChars,
+  );
 }
 
 const plugin = {
@@ -329,9 +377,13 @@ const plugin = {
     }): Promise<void> {
       const selectedIds = gatherSelectedMemoryIds(params.task);
       const toolTrace = gatherToolTrace(params.task, config.experience.maxToolEvents);
+      const toolSignals = buildToolSignals(toolTrace);
       const llmTrace = lastLlmTrace(params.task);
-      const assistantResponse = collectAssistantResponse(params.task, config.memory.maxExperienceChars);
-      const cleanedIntent = stripConversationMetadata(params.task.intent);
+      const assistantResponse = sanitizeMemoryText(
+        collectAssistantResponse(params.task, config.memory.maxExperienceChars),
+      );
+      const cleanedIntent = sanitizeMemoryText(params.task.intent);
+      const cleanedFeedback = sanitizeMemoryText(params.feedbackText);
 
       debugLog(
         api.logger,
@@ -358,37 +410,44 @@ const plugin = {
           return;
         }
 
-        const summary = await experienceSummarizer.summarize({
-          intent: cleanedIntent,
-          assistantResponse,
-          userFeedback: params.feedbackText,
-          reward: params.reward,
-          llmTrace,
-          toolTrace,
-        });
         const rawTrace = experienceSummarizer.formatRawTrace({
           intent: cleanedIntent,
           assistantResponse,
-          userFeedback: params.feedbackText,
+          userFeedback: cleanedFeedback,
           reward: params.reward,
           llmTrace,
           toolTrace,
         });
-        const cleanedExperience = stripConversationMetadata(
-          [
-            `intent: ${cleanedIntent}`,
-            `summary: ${summary}`,
-            `assistant: ${assistantResponse}`,
-            `user_feedback: ${params.feedbackText}`,
-            `reward: ${params.reward.toFixed(3)}`,
-            `raw_trace_json: ${rawTrace}`,
-          ]
-            .join("\n")
-            .trim(),
+        const summary = await experienceSummarizer.summarize({
+          intent: cleanedIntent,
+          assistantResponse,
+          userFeedback: cleanedFeedback,
+          reward: params.reward,
+          rawTrace,
+          llmTrace,
+          toolTrace,
+        });
+        const actionPath = buildActionPath(toolTrace, assistantResponse, 320);
+        const outcome =
+          params.reward > 0 ? "success" : params.reward < 0 ? "failure" : "neutral";
+        const toolOutcome = buildToolOutcomeSummary(toolSignals, 220);
+        const cleanedExperience = composeExperience({
+          summary,
+          actionPath,
+          outcome,
+          assistantResponse,
+          userFeedback: cleanedFeedback,
+          reward: params.reward,
+          toolOutcome,
+          maxChars: config.memory.maxExperienceChars,
+        });
+        debugLog(
+          api.logger,
+          `memory triplet preview intent="${oneLineForLog(cleanedIntent)}" experience="${oneLineForLog(cleanedExperience)}" embeddingDims=${params.task.intentEmbedding.length} reward=${params.reward.toFixed(3)} selected=${selectedIds.length}`,
         );
         store.add({
           intent: cleanedIntent,
-          experience: truncateText(cleanedExperience, config.memory.maxExperienceChars),
+          experience: cleanedExperience,
           embedding: params.task.intentEmbedding,
           qInit: config.learning.qInit,
           maxEntries: config.memory.maxEntries,
@@ -413,12 +472,18 @@ const plugin = {
       skipReason: string;
       reward: number;
     }> {
-      const cleanedFeedback = stripConversationMetadata(params.feedbackText);
-      const assistantResponse = collectAssistantResponse(params.task, config.memory.maxExperienceChars);
+      const cleanedFeedback = sanitizeMemoryText(params.feedbackText);
+      const assistantResponse = sanitizeMemoryText(
+        collectAssistantResponse(params.task, config.memory.maxExperienceChars),
+      );
+      const toolSignals = buildToolSignals(
+        gatherToolTrace(params.task, config.experience.maxToolEvents),
+      );
       const scored = await rewardScorer.score({
         userFeedback: cleanedFeedback,
-        intent: stripConversationMetadata(params.task.intent),
+        intent: sanitizeMemoryText(params.task.intent),
         assistantResponse,
+        toolSignals,
       });
       const feedbackDetected =
         params.explicitFeedback ||

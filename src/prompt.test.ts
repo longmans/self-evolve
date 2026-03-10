@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripConversationMetadata } from "./prompt.js";
+import { sanitizeMemoryText, stripConversationMetadata } from "./prompt.js";
 
 describe("stripConversationMetadata", () => {
   it("removes conversation metadata block and keeps user content", () => {
@@ -48,6 +48,19 @@ describe("stripConversationMetadata", () => {
     ].join("\n");
     expect(stripConversationMetadata(input)).toBe(
       ["intent:", "帮我看看/home目录下有哪些文件？", "user_feedback:", "很好"].join("\n"),
+    );
+  });
+
+  it("sanitizes message id and sender id leakage for memory fields", () => {
+    const input = [
+      "[message_id: om_x100b559d255a5904c2ef5b224426c1b]",
+      "ou_41b427ee3d1ca8304e83f6540c04a3cb: 你帮我看看/data 目录下有什么",
+      "",
+      "user_feedback: [message_id: om_x100b559d3ea5d444c117283ea62a031]",
+      "ou_41b427ee3d1ca8304e83f6540c04a3cb: 赞",
+    ].join("\n");
+    expect(sanitizeMemoryText(input)).toBe(
+      ["你帮我看看/data 目录下有什么", "", "user_feedback:", "赞"].join("\n"),
     );
   });
 });

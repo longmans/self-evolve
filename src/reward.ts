@@ -7,6 +7,12 @@ export type RewardInput = {
   userFeedback: string;
   intent: string;
   assistantResponse: string;
+  toolSignals?: {
+    toolCalls: number;
+    toolFailures: number;
+    toolSuccessRate: number;
+    hasToolError: boolean;
+  };
 };
 
 export type RewardResult = {
@@ -21,6 +27,105 @@ function clampScore(value: number): number {
     return 0;
   }
   return Math.max(-1, Math.min(1, value));
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, value));
+}
+
+const EXPLICIT_POSITIVE_PATTERNS = [
+  /\b(thanks|thank you|great|good job|works|worked|fixed|resolved|perfect)\b/i,
+  /(谢谢|很好|不错|可以了|解决了|搞定了|赞|牛)/,
+];
+
+const IMPLICIT_NEGATIVE_PATTERNS = [
+  /\b(not working|doesn'?t work|still broken|try another way|another approach|problem)\b/i,
+  /(有问题|换个方法|换一种|还是不行|不对|没解决|报错|失败)/,
+];
+
+function hasPattern(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function looksLikeNewRequest(text: string): boolean {
+  const cleaned = text.trim().toLowerCase();
+  if (!cleaned) {
+    return false;
+  }
+  if (cleaned.includes("?") || cleaned.includes("？")) {
+    return true;
+  }
+  const starters = [
+    "帮我",
+    "请",
+    "请你",
+    "how ",
+    "what ",
+    "why ",
+    "can you",
+    "could you",
+    "show me",
+    "list ",
+  ];
+  return starters.some((prefix) => cleaned.startsWith(prefix));
+}
+
+export function calibrateRewardResult(
+  result: RewardResult,
+  input: RewardInput,
+): RewardResult {
+  if (result.source !== "openai") {
+    return result;
+  }
+  const feedback = input.userFeedback.trim();
+  if (!feedback) {
+    return { ...result, score: 0, confidence: 0 };
+  }
+
+  const explicitPositive = hasPattern(feedback, EXPLICIT_POSITIVE_PATTERNS);
+  const implicitNegative = hasPattern(feedback, IMPLICIT_NEGATIVE_PATTERNS);
+  const newRequest = looksLikeNewRequest(feedback);
+  const toolCalls = Math.max(0, input.toolSignals?.toolCalls ?? 0);
+  const hasSignals = toolCalls > 0;
+  const toolSuccessRate = hasSignals ? clamp01(input.toolSignals?.toolSuccessRate ?? 0) : 0;
+  const hasToolError = hasSignals && Boolean(input.toolSignals?.hasToolError);
+
+  let score = clampScore(result.score);
+  let confidence = clamp01(result.confidence);
+
+  if (newRequest && !explicitPositive && !implicitNegative) {
+    score = clampScore(score * 0.2);
+    confidence = Math.min(confidence, 0.45);
+  }
+
+  if (implicitNegative) {
+    const penaltyFloor = hasSignals && (hasToolError || toolSuccessRate < 0.5) ? -0.7 : -0.45;
+    score = Math.min(score, penaltyFloor);
+    confidence = Math.max(confidence, 0.72);
+  }
+
+  if (explicitPositive) {
+    if (hasSignals && !hasToolError && toolSuccessRate >= 0.9) {
+      score = Math.max(score, 0.6);
+      confidence = Math.max(confidence, 0.72);
+    } else if (hasSignals && hasToolError) {
+      confidence = Math.min(confidence, 0.6);
+    }
+  }
+
+  if (!explicitPositive && hasSignals && hasToolError && score > 0.3) {
+    score = clampScore(score * 0.65);
+    confidence = Math.min(confidence, 0.65);
+  }
+
+  return {
+    ...result,
+    score: clampScore(score),
+    confidence: clamp01(confidence),
+  };
 }
 
 const RewardSchema = z.object({
@@ -77,11 +182,12 @@ export class RewardScorer {
             content:
               [
                 "You are a strict reward model for agent learning.",
-                "Evaluate ONLY whether the user's latest message explicitly reflects satisfaction or dissatisfaction with the previous assistant response.",
+                "Evaluate whether the user's latest message reflects satisfaction or dissatisfaction with the previous assistant response.",
                 "Important rules:",
                 "1) If the user is asking a new question, switching topic, or giving neutral continuation with no explicit judgment, score MUST stay near zero in [-0.1, 0.1].",
-                "2) Use high positive/negative scores only when there is explicit evaluative signal (e.g., works/thanks/fixed vs wrong/still broken/error).",
-                "3) If evidence is weak or ambiguous, keep score near zero and lower confidence.",
+                "2) Treat implicit dissatisfaction as negative feedback (e.g., 'still not working', 'try another way', '有问题', '换个方法').",
+                "3) Consider tool execution outcomes as supporting evidence, but user feedback is primary.",
+                "4) If evidence is weak or ambiguous, keep score near zero and lower confidence.",
                 "Return JSON only: {\"score\": number, \"confidence\": number, \"reason\": string}.",
                 "score in [-1,1], confidence in [0,1].",
               ].join("\n"),
@@ -91,6 +197,11 @@ export class RewardScorer {
             content: [
               `Previous intent:\n${input.intent}`,
               `Assistant response:\n${input.assistantResponse}`,
+              `Tool outcome:\n${
+                input.toolSignals
+                  ? `calls=${input.toolSignals.toolCalls}, failures=${input.toolSignals.toolFailures}, successRate=${input.toolSignals.toolSuccessRate.toFixed(3)}, hasToolError=${String(input.toolSignals.hasToolError)}`
+                  : "no-tool-signals"
+              }`,
               `User follow-up feedback:\n${input.userFeedback}`,
             ].join("\n\n"),
           },
@@ -108,7 +219,7 @@ export class RewardScorer {
           unavailableReason: "empty-structured-output",
         };
       }
-      return {
+      const baseResult: RewardResult = {
         score: clampScore(parsed.score),
         confidence:
           typeof parsed.confidence === "number"
@@ -116,6 +227,7 @@ export class RewardScorer {
             : 0,
         source: "openai",
       };
+      return calibrateRewardResult(baseResult, input);
     } catch (error) {
       return {
         score: 0,

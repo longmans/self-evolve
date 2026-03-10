@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
-import { truncateText } from "./prompt.js";
+import { sanitizeMemoryText, stripConversationMetadata, truncateText } from "./prompt.js";
 import type { SelfEvolveConfig } from "./types.js";
 
 export type ToolTrace = {
@@ -25,9 +25,63 @@ export type ExperienceSummaryInput = {
   assistantResponse: string;
   userFeedback: string;
   reward: number;
+  rawTrace?: string;
   llmTrace?: LlmTrace;
   toolTrace: ToolTrace[];
 };
+
+export type ComposeExperienceInput = {
+  summary: string;
+  actionPath: string;
+  outcome: "success" | "failure" | "neutral";
+  assistantResponse: string;
+  userFeedback: string;
+  reward: number;
+  toolOutcome: string;
+  maxChars: number;
+};
+
+export function composeExperience(input: ComposeExperienceInput): string {
+  const payload = [
+    `summary: ${input.summary || "no_summary"}`,
+    `action_path: ${input.actionPath || "no_action_captured"}`,
+    `outcome: ${input.outcome}`,
+    `assistant: ${input.assistantResponse || "none"}`,
+    `user_feedback: ${input.userFeedback || "none"}`,
+    `reward: ${input.reward.toFixed(3)}`,
+    `tool_outcome: ${input.toolOutcome || "no_tool_calls"}`,
+  ]
+    .join("\n")
+    .trim();
+  return truncateText(
+    sanitizeMemoryText(stripConversationMetadata(payload)),
+    input.maxChars,
+  );
+}
+
+export function buildSummaryTracePayload(
+  input: ExperienceSummaryInput,
+  maxSummaryInputChars: number,
+  maxRawChars: number,
+): {
+  intent: string;
+  assistantResponse: string;
+  userFeedback: string;
+  reward: number;
+  rawTrace: string;
+  llmTrace?: LlmTrace;
+  toolTrace: ToolTrace[];
+} {
+  return {
+    intent: input.intent,
+    assistantResponse: truncateText(input.assistantResponse, maxSummaryInputChars),
+    userFeedback: truncateText(input.userFeedback, 420),
+    reward: input.reward,
+    rawTrace: truncateText(input.rawTrace ?? "", maxRawChars),
+    llmTrace: input.llmTrace,
+    toolTrace: input.toolTrace,
+  };
+}
 
 function safeJson(value: unknown, maxChars: number): string {
   try {
@@ -128,14 +182,11 @@ export class ExperienceSummarizer {
     if (!this.openaiClient || this.config.experience.summarizer !== "openai") {
       return "";
     }
-    const tracePayload = {
-      intent: input.intent,
-      assistantResponse: truncateText(input.assistantResponse, 700),
-      userFeedback: truncateText(input.userFeedback, 420),
-      reward: input.reward,
-      llmTrace: input.llmTrace,
-      toolTrace: input.toolTrace,
-    };
+    const tracePayload = buildSummaryTracePayload(
+      input,
+      700,
+      this.config.experience.maxRawChars,
+    );
     try {
       const response = await this.openaiClient.responses.parse({
         model: this.config.experience.model,
@@ -144,7 +195,17 @@ export class ExperienceSummarizer {
           {
             role: "system",
             content:
-              "Summarize an agent trajectory into reusable procedural memory. Focus on what strategy worked/failed, key tool outcomes, and failure safeguards. Return strict JSON: {\"summary\": string}.",
+              [
+                "Summarize an agent trajectory into reusable procedural memory for future similar tasks.",
+                "Style requirements:",
+                "1) Be action-oriented: describe the key action sequence and decision points.",
+                "2) Be abstract: keep transferable strategy, avoid copying transient identifiers, raw message metadata, IDs, or exact sender tags.",
+                "3) Be causal: include what caused success/failure and what safeguards to apply next time.",
+                "4) Do not repeat the intent verbatim. Focus on strategy and lessons.",
+                "5) Do not output sensitive information. Never include private user data, emails, phone numbers, home addresses, account IDs, API keys, access tokens, passwords, cookies, secrets, full local file paths, or exact command arguments containing secrets.",
+                "6) If sensitive data appears in the trace, replace it with generic placeholders like [REDACTED_USER], [REDACTED_SECRET], [REDACTED_PATH].",
+                "Return strict JSON only: {\"summary\": string}.",
+              ].join("\n"),
           },
           {
             role: "user",

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSummaryTracePayload,
   buildLlmTrace,
   buildToolTrace,
+  composeExperience,
   ExperienceSummarizer,
   type ExperienceSummaryInput,
 } from "./experience.js";
@@ -87,5 +89,47 @@ describe("experience trace", () => {
     };
     const summary = await summarizer.summarize(input);
     expect(summary).toBe("");
+  });
+
+  it("composes experience without intent leakage and strips metadata ids", () => {
+    const experience = composeExperience({
+      summary: "Use official docs first, then verify with command output.",
+      actionPath: "bash:ok -> grep:ok",
+      outcome: "success",
+      assistantResponse: "[message_id: om_xxx]\nou_abc1234567890ffff: done",
+      userFeedback: "[message_id: om_yyy]\nou_abc1234567890ffff: 解决了",
+      reward: 0.9,
+      toolOutcome: "calls=2, failures=0, success_rate=1.000, has_error=false",
+      maxChars: 1200,
+    });
+    expect(experience.includes("intent:")).toBe(false);
+    expect(experience.includes("raw_trace_json:")).toBe(false);
+    expect(experience.includes("[message_id:")).toBe(false);
+    expect(experience.includes("ou_abc1234567890ffff:")).toBe(false);
+    expect(experience.includes("action_path:")).toBe(true);
+  });
+
+  it("includes rawTrace in summary payload but truncates by maxRawChars", () => {
+    const payload = buildSummaryTracePayload(
+      {
+        intent: "fix install issue",
+        assistantResponse: "run command and verify",
+        userFeedback: "works now thanks",
+        reward: 0.9,
+        rawTrace: "x".repeat(200),
+        llmTrace: {
+          provider: "openai",
+          model: "x",
+          usage: "input=10 output=20",
+          assistantTexts: ["run x"],
+          reasoningSignals: ["check prerequisites first"],
+        },
+        toolTrace: [{ toolName: "bash" }],
+      },
+      700,
+      32,
+    );
+    expect(payload.rawTrace.length).toBeLessThanOrEqual(35);
+    expect(payload.rawTrace.length).toBeGreaterThan(0);
   });
 });

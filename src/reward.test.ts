@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RewardScorer } from "./reward.js";
+import { calibrateRewardResult, RewardScorer } from "./reward.js";
 import type { SelfEvolveConfig } from "./types.js";
 
 function config(overrides?: Partial<SelfEvolveConfig["reward"]>): SelfEvolveConfig {
@@ -60,5 +60,60 @@ describe("RewardScorer", () => {
     });
     expect(result.source).toBe("unavailable");
     expect(result.score).toBe(0);
+  });
+
+  it("calibrates implicit negative feedback with tool failures", () => {
+    const result = calibrateRewardResult(
+      { score: -0.1, confidence: 0.4, source: "openai" },
+      {
+        userFeedback: "这个有问题，换个方法试试",
+        intent: "fix issue",
+        assistantResponse: "run command",
+        toolSignals: { toolCalls: 2, toolFailures: 1, toolSuccessRate: 0.5, hasToolError: true },
+      },
+    );
+    expect(result.score).toBeLessThanOrEqual(-0.7);
+    expect(result.confidence).toBeGreaterThanOrEqual(0.72);
+  });
+
+  it("calibrates positive feedback when tool success is consistent", () => {
+    const result = calibrateRewardResult(
+      { score: 0.35, confidence: 0.5, source: "openai" },
+      {
+        userFeedback: "很好，已经解决了，谢谢",
+        intent: "fix issue",
+        assistantResponse: "run command",
+        toolSignals: { toolCalls: 3, toolFailures: 0, toolSuccessRate: 1, hasToolError: false },
+      },
+    );
+    expect(result.score).toBeGreaterThanOrEqual(0.6);
+    expect(result.confidence).toBeGreaterThanOrEqual(0.72);
+  });
+
+  it("dampens likely new request to near-zero when no feedback signal", () => {
+    const result = calibrateRewardResult(
+      { score: 0.5, confidence: 0.8, source: "openai" },
+      {
+        userFeedback: "可以帮我再看下 /tmp 目录吗？",
+        intent: "fix issue",
+        assistantResponse: "run command",
+      },
+    );
+    expect(Math.abs(result.score)).toBeLessThanOrEqual(0.1);
+    expect(result.confidence).toBeLessThanOrEqual(0.45);
+  });
+
+  it("does not treat toolCalls=0 as successful tool signal for positive boost", () => {
+    const result = calibrateRewardResult(
+      { score: 0.35, confidence: 0.5, source: "openai" },
+      {
+        userFeedback: "很好，已经解决了，谢谢",
+        intent: "fix issue",
+        assistantResponse: "run command",
+        toolSignals: { toolCalls: 0, toolFailures: 0, toolSuccessRate: 1, hasToolError: false },
+      },
+    );
+    expect(result.score).toBe(0.35);
+    expect(result.confidence).toBe(0.5);
   });
 });

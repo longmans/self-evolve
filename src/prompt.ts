@@ -123,6 +123,32 @@ export function stripConversationMetadata(value: string): string {
   return compacted.join("\n");
 }
 
+export function sanitizeMemoryText(value: string): string {
+  const stripped = stripConversationMetadata(value);
+  const cleanedLines = stripped
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/\[message_id:[^\]]+\]\s*/gi, "")
+        .replace(/^\s*[a-z]{1,4}_[a-f0-9]{8,}:\s*/i, "")
+        .trimEnd(),
+    )
+    .filter((line, index, lines) => {
+      if (line.trim().length > 0) {
+        return true;
+      }
+      const prev = index > 0 ? lines[index - 1] : "";
+      return prev.trim().length > 0;
+    });
+  while (cleanedLines.length > 0 && cleanedLines[0]!.trim().length === 0) {
+    cleanedLines.shift();
+  }
+  while (cleanedLines.length > 0 && cleanedLines[cleanedLines.length - 1]!.trim().length === 0) {
+    cleanedLines.pop();
+  }
+  return cleanedLines.join("\n");
+}
+
 export function extractMessageText(message: unknown): string {
   if (!message || typeof message !== "object") {
     return "";
