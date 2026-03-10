@@ -17,7 +17,6 @@ import {
   buildMemRLContext,
   extractMessageText,
   sanitizeMemoryText,
-  stripConversationMetadata,
   truncateText,
 } from "./src/prompt.js";
 import { RewardScorer } from "./src/reward.js";
@@ -85,6 +84,14 @@ function shouldTriggerRetrieval(prompt: string, minPromptChars: number): boolean
     "ok",
     "okay",
     "good",
+    "谢谢",
+    "很好",
+    "收到",
+    "不客气",
+    "赞",
+    "好的",
+    "好",
+    "ok了",
   ]);
   return !nonLearnable.has(normalized);
 }
@@ -97,7 +104,7 @@ function isOnlySymbolsOrEmoji(text: string): boolean {
 }
 
 function isExplicitFeedback(text: string): boolean {
-  const cleaned = stripConversationMetadata(text).trim();
+  const cleaned = sanitizeMemoryText(text).trim();
   if (!cleaned) {
     return false;
   }
@@ -122,7 +129,7 @@ function isExplicitFeedback(text: string): boolean {
 }
 
 function isLikelyNewRequest(text: string): boolean {
-  const cleaned = stripConversationMetadata(text).trim().toLowerCase();
+  const cleaned = sanitizeMemoryText(text).trim().toLowerCase();
   if (!cleaned) {
     return false;
   }
@@ -555,7 +562,7 @@ const plugin = {
     );
 
     api.on("before_prompt_build", async (event, ctx) => {
-      const prompt = stripConversationMetadata(event.prompt?.trim() ?? "");
+      const prompt = sanitizeMemoryText(event.prompt?.trim() ?? "");
       await ready;
       const sessionKey = resolveSessionKey(ctx);
       const now = Date.now();
@@ -586,30 +593,29 @@ const plugin = {
       }
 
       const activeTask = pendingBySession.get(sessionKey);
-      if (activeTask) {
-        if (activeTask.state === "waiting_feedback") {
-          const explicitFeedback = isExplicitFeedback(prompt);
-          const likelyNewRequest = isLikelyNewRequest(prompt);
-          if (!likelyNewRequest) {
-            const feedbackResult = await maybeLearnOnFeedback({
-              task: activeTask,
-              feedbackText: prompt,
-              explicitFeedback,
-            });
-            if (feedbackResult.feedbackDetected) {
-              deletePending(sessionKey);
-              if (!shouldTriggerRetrieval(prompt, config.runtime.minPromptChars)) {
-                debugLog(api.logger, "retrieval skipped by trigger gate");
-                return;
-              }
-            }
+      if (activeTask && activeTask.state === "waiting_feedback") {
+        const explicitFeedback = isExplicitFeedback(prompt);
+        const likelyNewRequest = isLikelyNewRequest(prompt);
+        if (likelyNewRequest) {
+          debugLog(api.logger, "task closed reason=likely-new-request");
+          deletePending(sessionKey);
+        } else {
+          const feedbackResult = await maybeLearnOnFeedback({
+            task: activeTask,
+            feedbackText: prompt,
+            explicitFeedback,
+          });
+          if (feedbackResult.feedbackDetected) {
+            deletePending(sessionKey);
+            debugLog(
+              api.logger,
+              "feedback handled; skip retrieval/task creation for feedback-only turn",
+            );
+            return;
           }
+        }
 
-          if (pendingBySession.get(sessionKey)?.state === "waiting_feedback") {
-            if (likelyNewRequest) {
-              debugLog(api.logger, "feedback detection skipped reason=likely-new-request");
-            }
-
+        if (pendingBySession.get(sessionKey)?.state === "waiting_feedback") {
           if (!shouldTriggerRetrieval(prompt, config.runtime.minPromptChars)) {
             const nextIdle = activeTask.idleTurns + 1;
             if (nextIdle >= config.runtime.idleTurnsToClose) {
@@ -646,7 +652,6 @@ const plugin = {
                 updatedAt: now,
               });
             }
-          }
           }
         }
       }
