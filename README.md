@@ -103,6 +103,41 @@ Memory retention:
 openclaw config set plugins.entries.self-evolve.config.memory.maxEntries 200
 ```
 
+### FAQ
+
+Q: How do I know `self-evolve` is running normally?
+
+A: Check gateway logs for these signals:
+- Startup:
+  - `self-evolve: initialized ...`
+  - `self-evolve: loaded <N> episodic memories`
+- Hook pipeline:
+  - `[self-evolve] hook before_prompt_build ...`
+  - `[self-evolve] agent_end captured ...`
+  - `[self-evolve] llm_output captured ...`
+- Learning pipeline:
+  - `self-evolve: feedback scored ...`
+  - `[self-evolve] learning start ...` / `[self-evolve] learning skipped ...`
+  - `[self-evolve] learning persisted to episodic store`
+
+Q: How do I know the agent actually used evolved skills (episodic memory)?
+
+A: Look for retrieval and injection evidence:
+- `[self-evolve] phase-a candidates=<N>` where `N > 0`
+- `[self-evolve] phase-b ... selected=<K>` where `K > 0`
+- `[self-evolve] pending created ... selectedIds=<not none>`
+- `[self-evolve] prependContext preview=<self-evolve-memories>...`
+
+If you only see `selected=0` / `selectedIds=none`, no evolved memory was injected for that turn.
+
+Q: How do I know learning has written new memory?
+
+A: Look for:
+- `[self-evolve] memory append ...`
+- `[self-evolve] learning persisted to episodic store`
+
+Then verify the state file (`plugins/self-evolve/episodic-memory.json`) has new entries.
+
 ## 中文
 
 `self-evolve` 是一个为openclaw设计的自学习插件，可以更少token、更算法的学习新技能：
@@ -182,6 +217,41 @@ openclaw config set plugins.entries.self-evolve.config.runtime.learnMode '"balan
 ```bash
 openclaw config set plugins.entries.self-evolve.config.memory.maxEntries 200
 ```
+
+### FAQ
+
+问：怎么确认 `self-evolve` 已经正常运行？
+
+答：看 gateway 日志里这些关键信号：
+- 启动阶段：
+  - `self-evolve: initialized ...`
+  - `self-evolve: loaded <N> episodic memories`
+- Hook 流程：
+  - `[self-evolve] hook before_prompt_build ...`
+  - `[self-evolve] agent_end captured ...`
+  - `[self-evolve] llm_output captured ...`
+- 学习流程：
+  - `self-evolve: feedback scored ...`
+  - `[self-evolve] learning start ...` / `[self-evolve] learning skipped ...`
+  - `[self-evolve] learning persisted to episodic store`
+
+问：怎么确认已经用了“进化后的技能”（即历史记忆）？
+
+答：看检索与注入日志：
+- `[self-evolve] phase-a candidates=<N>` 且 `N > 0`
+- `[self-evolve] phase-b ... selected=<K>` 且 `K > 0`
+- `[self-evolve] pending created ... selectedIds=<不是 none>`
+- `[self-evolve] prependContext preview=<self-evolve-memories>...`
+
+如果经常是 `selected=0` 或 `selectedIds=none`，说明该轮没有注入进化记忆。
+
+问：怎么确认学习已经写入了新记忆？
+
+答：看这些日志：
+- `[self-evolve] memory append ...`
+- `[self-evolve] learning persisted to episodic store`
+
+然后可以检查状态文件 `plugins/self-evolve/episodic-memory.json` 是否有新增条目。
 
 ### References / 参考
 
