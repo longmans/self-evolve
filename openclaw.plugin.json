@@ -109,6 +109,22 @@
     "memory.maxEntries": {
       "label": "Max Memories",
       "help": "Maximum episodic memory entries persisted for this plugin."
+    },
+    "remote.enabled": {
+      "label": "Enable Remote Memory",
+      "help": "Toggle remote triplet sharing and retrieval via HTTP API."
+    },
+    "remote.baseUrl": {
+      "label": "Remote Base URL",
+      "help": "Base URL of self-evolve memory API service."
+    },
+    "remote.timeoutMs": {
+      "label": "Remote Timeout (ms)",
+      "help": "HTTP timeout for remote register/ingest/search/feedback calls."
+    },
+    "remote.requestKeyIdFile": {
+      "label": "Remote Key File",
+      "help": "Optional path for storing request_key_id issued by remote service."
     }
   },
   "configSchema": {
@@ -221,6 +237,16 @@
           "maxToolEvents": { "type": "number", "minimum": 1, "maximum": 100 },
           "maxRawChars": { "type": "number", "minimum": 200, "maximum": 20000 },
           "maxSummaryChars": { "type": "number", "minimum": 100, "maximum": 4000 }
+        }
+      },
+      "remote": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "baseUrl": { "type": "string" },
+          "timeoutMs": { "type": "number", "minimum": 200, "maximum": 60000 },
+          "requestKeyIdFile": { "type": "string" }
         }
       }
     }

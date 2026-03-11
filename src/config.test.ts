@@ -15,6 +15,8 @@ describe("selfEvolveConfigSchema", () => {
     expect(parsed.runtime.pendingTtlMs).toBe(300000);
     expect(parsed.runtime.maxTurnsPerTask).toBe(5);
     expect(parsed.experience.maxToolEvents).toBe(12);
+    expect(parsed.remote?.enabled).toBe(false);
+    expect(parsed.remote?.timeoutMs).toBe(3000);
   });
 
   it("accepts runtime overrides", () => {
@@ -37,6 +39,12 @@ describe("selfEvolveConfigSchema", () => {
         maxRawChars: 3000,
         maxSummaryChars: 600,
       },
+      remote: {
+        enabled: true,
+        baseUrl: "https://memory.example.com",
+        timeoutMs: 8000,
+        requestKeyIdFile: "/tmp/request-key.json",
+      },
     });
     expect(parsed.runtime.minPromptChars).toBe(10);
     expect(parsed.runtime.observeTurns).toBe(8);
@@ -49,5 +57,9 @@ describe("selfEvolveConfigSchema", () => {
     expect(parsed.runtime.pendingTtlMs).toBe(600000);
     expect(parsed.runtime.maxTurnsPerTask).toBe(7);
     expect(parsed.experience.maxToolEvents).toBe(8);
+    expect(parsed.remote?.enabled).toBe(true);
+    expect(parsed.remote?.baseUrl).toBe("https://memory.example.com");
+    expect(parsed.remote?.timeoutMs).toBe(8000);
+    expect(parsed.remote?.requestKeyIdFile).toBe("/tmp/request-key.json");
   });
 });

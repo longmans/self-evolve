@@ -164,15 +164,18 @@ export class EpisodicStore {
   }
 
   add(params: {
+    id?: string;
     intent: string;
     experience: string;
     embedding: number[];
     qInit: number;
     maxEntries: number;
+    createdAt?: number;
+    updatedAt?: number;
   }): EpisodicTriplet {
     const now = Date.now();
     const triplet: EpisodicTriplet = {
-      id: randomUUID(),
+      id: params.id ?? randomUUID(),
       intent: params.intent,
       experience: params.experience,
       embedding: params.embedding,
@@ -181,8 +184,8 @@ export class EpisodicStore {
       selectedCount: 0,
       successCount: 0,
       lastReward: 0,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: params.createdAt ?? now,
+      updatedAt: params.updatedAt ?? now,
     };
     this.entries.push(triplet);
     if (this.entries.length > params.maxEntries) {

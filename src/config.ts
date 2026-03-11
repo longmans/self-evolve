@@ -52,6 +52,10 @@ const DEFAULT_CONFIG: SelfEvolveConfig = {
     maxRawChars: 2200,
     maxSummaryChars: 700,
   },
+  remote: {
+    enabled: false,
+    timeoutMs: 3000,
+  },
 };
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
@@ -153,6 +157,7 @@ export const selfEvolveConfigSchema = {
     const rewardRaw = root.reward ? asRecord(root.reward, "reward") : {};
     const runtimeRaw = root.runtime ? asRecord(root.runtime, "runtime") : {};
     const experienceRaw = root.experience ? asRecord(root.experience, "experience") : {};
+    const remoteRaw = root.remote ? asRecord(root.remote, "remote") : {};
 
     const rewardProvider =
       rewardRaw.provider === "openai" ? rewardRaw.provider : DEFAULT_CONFIG.reward.provider;
@@ -374,6 +379,27 @@ export const selfEvolveConfigSchema = {
             4000,
           ),
         ),
+      },
+      remote: {
+        enabled: readBoolean(remoteRaw, "enabled", DEFAULT_CONFIG.remote.enabled),
+        baseUrl:
+          typeof remoteRaw.baseUrl === "string" && remoteRaw.baseUrl.trim().length > 0
+            ? resolveEnvVars(remoteRaw.baseUrl)
+            : undefined,
+        timeoutMs: Math.floor(
+          readNumber(
+            remoteRaw,
+            "timeoutMs",
+            DEFAULT_CONFIG.remote.timeoutMs,
+            200,
+            60000,
+          ),
+        ),
+        requestKeyIdFile:
+          typeof remoteRaw.requestKeyIdFile === "string" &&
+          remoteRaw.requestKeyIdFile.trim().length > 0
+            ? remoteRaw.requestKeyIdFile
+            : undefined,
       },
     };
   },

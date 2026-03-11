@@ -19,9 +19,10 @@ import {
   sanitizeMemoryText,
   truncateText,
 } from "./src/prompt.js";
+import { RemoteMemoryClient } from "./src/remote.js";
 import { RewardScorer } from "./src/reward.js";
 import { EpisodicStore } from "./src/store.js";
-import type { ScoredCandidate } from "./src/types.js";
+import type { RetrievalCandidate, ScoredCandidate } from "./src/types.js";
 
 type TaskState = "open" | "waiting_feedback";
 
@@ -216,10 +217,32 @@ function gatherSelectedMemoryIds(task: PendingTask): string[] {
   const ids = new Set<string>();
   for (const turn of task.turns) {
     for (const selected of turn.selected) {
+      if (selected.source === "remote") {
+        continue;
+      }
       ids.add(selected.triplet.id);
     }
   }
   return [...ids];
+}
+
+function gatherSelectedRemoteTriplets(task: PendingTask): Array<{
+  tripletId: string;
+  ownerRequestKeyId?: string;
+}> {
+  const selected = new Map<string, { tripletId: string; ownerRequestKeyId?: string }>();
+  for (const turn of task.turns) {
+    for (const candidate of turn.selected) {
+      if (candidate.source !== "remote") {
+        continue;
+      }
+      selected.set(candidate.triplet.id, {
+        tripletId: candidate.triplet.id,
+        ownerRequestKeyId: candidate.ownerRequestKeyId,
+      });
+    }
+  }
+  return [...selected.values()];
 }
 
 function gatherToolTrace(task: PendingTask, maxToolEvents: number): ToolTrace[] {
@@ -302,7 +325,19 @@ const plugin = {
     const stateDir = api.runtime.state.resolveStateDir();
     const stateFile =
       config.memory.stateFile ?? join(stateDir, "plugins", "self-evolve", "episodic-memory.json");
+    const requestKeyIdFile =
+      config.remote?.requestKeyIdFile ??
+      join(stateDir, "plugins", "self-evolve", "remote-request-key.json");
     const store = new EpisodicStore(stateFile);
+    const remoteClient =
+      config.remote?.enabled && config.remote.baseUrl
+        ? new RemoteMemoryClient({
+            baseUrl: config.remote.baseUrl.replace(/\/+$/, ""),
+            timeoutMs: config.remote.timeoutMs,
+            requestKeyIdFile,
+            logger: api.logger,
+          })
+        : null;
     const ready = store.load();
     const pendingBySession = new Map<string, PendingTask>();
     const sessionByRunId = new Map<string, string>();
@@ -383,6 +418,7 @@ const plugin = {
       feedbackText: string;
     }): Promise<void> {
       const selectedIds = gatherSelectedMemoryIds(params.task);
+      const selectedRemoteTriplets = gatherSelectedRemoteTriplets(params.task);
       const toolTrace = gatherToolTrace(params.task, config.experience.maxToolEvents);
       const toolSignals = buildToolSignals(toolTrace);
       const llmTrace = lastLlmTrace(params.task);
@@ -404,6 +440,24 @@ const plugin = {
         gamma: config.learning.gamma,
         bootstrapNextMax: 0,
       });
+
+      if (remoteClient && selectedRemoteTriplets.length > 0) {
+        try {
+          await remoteClient.feedback({
+            reward: params.reward,
+            taskId: params.task.id,
+            usedTriplets: selectedRemoteTriplets,
+          });
+          debugLog(
+            api.logger,
+            `remote feedback synced task=${params.task.id.slice(0, 8)} remoteUsed=${selectedRemoteTriplets.length} reward=${params.reward.toFixed(3)}`,
+          );
+        } catch (error) {
+          api.logger.info(
+            `self-evolve: remote feedback skipped task=${params.task.id.slice(0, 8)} reason=${String(error)}`,
+          );
+        }
+      }
 
       if (params.reward > 0 || config.memory.includeFailures) {
         const intentDecision = await intentJudge.judge(cleanedIntent);
@@ -452,12 +506,43 @@ const plugin = {
           api.logger,
           `memory triplet preview intent="${oneLineForLog(cleanedIntent)}" experience="${oneLineForLog(cleanedExperience)}" embeddingDims=${params.task.intentEmbedding.length} reward=${params.reward.toFixed(3)} selected=${selectedIds.length}`,
         );
-        store.add({
+        const tripletId = randomUUID();
+        const tripletCreatedAt = Date.now();
+        const triplet = {
+          id: tripletId,
           intent: cleanedIntent,
           experience: cleanedExperience,
           embedding: params.task.intentEmbedding,
-          qInit: config.learning.qInit,
+          qValue: config.learning.qInit,
+          visits: 0,
+          selectedCount: 0,
+          successCount: 0,
+          lastReward: 0,
+          createdAt: tripletCreatedAt,
+          updatedAt: tripletCreatedAt,
+        };
+        if (remoteClient) {
+          try {
+            await remoteClient.ingest({ triplet });
+            debugLog(
+              api.logger,
+              `remote ingest synced triplet=${triplet.id.slice(0, 8)} embeddingDims=${triplet.embedding.length}`,
+            );
+          } catch (error) {
+            api.logger.info(
+              `self-evolve: remote ingest skipped triplet=${triplet.id.slice(0, 8)} reason=${String(error)}`,
+            );
+          }
+        }
+        store.add({
+          id: triplet.id,
+          intent: triplet.intent,
+          experience: triplet.experience,
+          embedding: triplet.embedding,
+          qInit: triplet.qValue,
           maxEntries: config.memory.maxEntries,
+          createdAt: triplet.createdAt,
+          updatedAt: triplet.updatedAt,
         });
         debugLog(
           api.logger,
@@ -554,11 +639,11 @@ const plugin = {
 
     debugLog(
       api.logger,
-      `config loaded retrieval(k1=${config.retrieval.k1},k2=${config.retrieval.k2},delta=${config.retrieval.delta},tau=${config.retrieval.tau},lambda=${config.retrieval.lambda}) runtime(observeTurns=${config.runtime.observeTurns},minAbsReward=${config.runtime.minAbsReward},minRewardConfidence=${config.runtime.minRewardConfidence},newIntentSimilarityThreshold=${config.runtime.newIntentSimilarityThreshold},idleTurnsToClose=${config.runtime.idleTurnsToClose},pendingTtlMs=${config.runtime.pendingTtlMs},maxTurnsPerTask=${config.runtime.maxTurnsPerTask})`,
+      `config loaded retrieval(k1=${config.retrieval.k1},k2=${config.retrieval.k2},delta=${config.retrieval.delta},tau=${config.retrieval.tau},lambda=${config.retrieval.lambda}) runtime(observeTurns=${config.runtime.observeTurns},minAbsReward=${config.runtime.minAbsReward},minRewardConfidence=${config.runtime.minRewardConfidence},newIntentSimilarityThreshold=${config.runtime.newIntentSimilarityThreshold},idleTurnsToClose=${config.runtime.idleTurnsToClose},pendingTtlMs=${config.runtime.pendingTtlMs},maxTurnsPerTask=${config.runtime.maxTurnsPerTask}) remote(enabled=${String(config.remote?.enabled ?? false)},baseUrl=${config.remote?.baseUrl ?? "none"})`,
     );
 
     api.logger.info(
-      `self-evolve: initialized (embedder=${adapter.name}, k1=${config.retrieval.k1}, k2=${config.retrieval.k2})`,
+      `self-evolve: initialized (embedder=${adapter.name}, k1=${config.retrieval.k1}, k2=${config.retrieval.k2}, remote=${remoteClient ? "enabled" : "disabled"})`,
     );
 
     api.on("before_prompt_build", async (event, ctx) => {
@@ -668,8 +753,28 @@ const plugin = {
       }
       debugLog(api.logger, `embedding created dims=${queryEmbedding.length}`);
 
-      const candidates = store.search(queryEmbedding, config);
-      debugLog(api.logger, `phase-a candidates=${candidates.length}`);
+      const localCandidates: RetrievalCandidate[] = store
+        .search(queryEmbedding, config)
+        .map((candidate) => ({ ...candidate, source: "local" as const }));
+      let remoteCandidates: RetrievalCandidate[] = [];
+      if (remoteClient) {
+        try {
+          remoteCandidates = await remoteClient.search({
+            queryEmbedding,
+            topK: config.retrieval.k1,
+            delta: config.retrieval.delta,
+          });
+        } catch (error) {
+          api.logger.info(`self-evolve: remote search skipped reason=${String(error)}`);
+        }
+      }
+      const candidates = [...localCandidates, ...remoteCandidates]
+        .toSorted((left, right) => right.similarity - left.similarity)
+        .slice(0, config.retrieval.k1);
+      debugLog(
+        api.logger,
+        `phase-a candidates=${candidates.length} local=${localCandidates.length} remote=${remoteCandidates.length}`,
+      );
       const phaseB = selectPhaseB({ candidates, config });
       debugLog(
         api.logger,
@@ -836,6 +941,14 @@ const plugin = {
       id: "self-evolve",
       start: async () => {
         await ready;
+        if (remoteClient) {
+          try {
+            await remoteClient.ensureRequestKeyId();
+            debugLog(api.logger, "remote request key ready");
+          } catch (error) {
+            api.logger.info(`self-evolve: remote registration skipped reason=${String(error)}`);
+          }
+        }
         api.logger.info(`self-evolve: loaded ${store.list().length} episodic memories`);
       },
       stop: async () => {

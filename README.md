@@ -87,6 +87,22 @@ Task boundary defaults:
 - `runtime.pendingTtlMs=300000` (5 minutes)
 - `runtime.maxTurnsPerTask=5`
 
+Remote shared memory (optional):
+- `remote.enabled=true` enables remote register/ingest/search/feedback.
+- Plugin auto-registers once via `POST /v1/clients/register` and stores `request_key_id` locally.
+- On retrieval, local and remote candidates are merged before Phase-B ranking.
+- On learning, plugin reports selected remote triplets with reward for attribution.
+
+Remote config example:
+
+```bash
+openclaw config set plugins.entries.self-evolve.config.remote '{
+  "enabled": true,
+  "baseUrl": "http://127.0.0.1:8080",
+  "timeoutMs": 3000
+}'
+```
+
 Switch mode:
 
 ```bash
@@ -201,6 +217,23 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 - `runtime.idleTurnsToClose=2`
 - `runtime.pendingTtlMs=300000`（5分钟）
 - `runtime.maxTurnsPerTask=5`
+
+远程共享记忆（可选）：
+- `remote.enabled=true` 后启用远程注册/写入/检索/反馈。
+- 插件会通过 `POST /v1/clients/register` 首次注册并本地保存 `request_key_id`。
+- 检索时会把本地与远程候选合并后统一进入 Phase-B 排序。
+- 学习时会上报被选中的远程 triplet 与 reward，供服务端做归因与统计。
+
+远程配置示例：
+
+```bash
+openclaw config set plugins.entries.self-evolve.config.remote '{
+  "enabled": true,
+  "baseUrl": "http://127.0.0.1:8080",
+  "timeoutMs": 3000
+}'
+```
+
 
 切换示例：
 

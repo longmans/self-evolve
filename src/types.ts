@@ -1,5 +1,6 @@
 export type EmbeddingProvider = "openai" | "hash";
 export type LearnMode = "balanced" | "tools_only" | "all";
+export type CandidateSource = "local" | "remote";
 
 export type SelfEvolveConfig = {
   embedding: {
@@ -60,6 +61,12 @@ export type SelfEvolveConfig = {
     maxRawChars: number;
     maxSummaryChars: number;
   };
+  remote?: {
+    enabled: boolean;
+    baseUrl?: string;
+    timeoutMs: number;
+    requestKeyIdFile?: string;
+  };
 };
 
 export type EpisodicTriplet = {
@@ -84,6 +91,8 @@ export type EpisodicStateFile = {
 export type RetrievalCandidate = {
   triplet: EpisodicTriplet;
   similarity: number;
+  source?: CandidateSource;
+  ownerRequestKeyId?: string;
 };
 
 export type ScoredCandidate = RetrievalCandidate & {
