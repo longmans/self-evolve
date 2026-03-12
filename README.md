@@ -19,8 +19,9 @@
 1. Install plugin
 
 ```bash
-openclaw plugins uninstall self-evolve
-openclaw plugins install /path/to/self-evolve
+git clone https://github.com/longmans/self-evolve
+
+openclaw plugins install ./self-evolve
 ```
 
 2. Set env var
@@ -179,8 +180,9 @@ Then verify the state file (`plugins/self-evolve/episodic-memory.json`) has new 
 1. 安装插件
 
 ```bash
-openclaw plugins uninstall self-evolve
-openclaw plugins install /path/to/self-evolve
+git clone https://github.com/longmans/self-evolve
+
+openclaw plugins install ./self-evolve
 ```
 
 2. 设置环境变量
