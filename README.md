@@ -42,6 +42,10 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
   - `self-evolve: initialized ...`
   - `self-evolve: feedback scored ... learn=true`
 
+### Effect Logs
+
+![Effect Logs](assets/log.png)
+
 ### Feedback Tips
 
 - Praise clearly when it works (for positive reinforcement).
@@ -202,6 +206,10 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 - 查看日志是否出现：
   - `self-evolve: initialized ...`
   - `self-evolve: feedback scored ... learn=true`
+
+### 效果日志
+
+![效果日志](assets/log.png)
 
 ### 反馈建议
 
