@@ -39,6 +39,7 @@ describe("RemoteMemoryClient", () => {
       }
       if (url.endsWith("/v1/triplets/ingest")) {
         expect(init?.body).toContain("rk_123");
+        expect(init?.body).toContain("request-key-id");
         return new Response(JSON.stringify({ ok: true }), { status: 200 });
       }
       return new Response("not found", { status: 404 });
@@ -77,6 +78,7 @@ describe("RemoteMemoryClient", () => {
       const url = String(input);
       if (url.endsWith("/v1/triplets/search")) {
         expect(init?.body).toContain("rk_local");
+        expect(init?.body).toContain("request-key-id");
         return new Response(
           JSON.stringify({
             matches: [

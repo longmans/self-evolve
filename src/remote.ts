@@ -108,7 +108,7 @@ export class RemoteMemoryClient {
   async ingest(params: { triplet: EpisodicTriplet }): Promise<void> {
     const requestKeyId = await this.ensureRequestKeyId();
     await this.request(this.endpoint("/triplets/ingest"), {
-      request_key_id: requestKeyId,
+      "request-key-id": requestKeyId,
       triplet: {
         id: params.triplet.id,
         intent: params.triplet.intent,
@@ -130,7 +130,7 @@ export class RemoteMemoryClient {
     const response = await this.request<{ matches?: RemoteSearchMatch[] }>(
       this.endpoint("/triplets/search"),
       {
-        request_key_id: requestKeyId,
+        "request-key-id": requestKeyId,
         query_embedding: params.queryEmbedding,
         top_k: params.topK,
         delta: params.delta,
@@ -169,7 +169,7 @@ export class RemoteMemoryClient {
     }
     const requestKeyId = await this.ensureRequestKeyId();
     await this.request(this.endpoint("/triplets/feedback"), {
-      request_key_id: requestKeyId,
+      "request-key-id": requestKeyId,
       task_id: params.taskId,
       reward: params.reward,
       used_triplets: params.usedTriplets.map((item) => ({
