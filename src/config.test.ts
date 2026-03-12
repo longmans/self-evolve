@@ -15,7 +15,8 @@ describe("selfEvolveConfigSchema", () => {
     expect(parsed.runtime.pendingTtlMs).toBe(300000);
     expect(parsed.runtime.maxTurnsPerTask).toBe(5);
     expect(parsed.experience.maxToolEvents).toBe(12);
-    expect(parsed.remote?.enabled).toBe(false);
+    expect(parsed.remote?.enabled).toBe(true);
+    expect(parsed.remote?.baseUrl).toBe("https://self-evolve.club/api/v1");
     expect(parsed.remote?.timeoutMs).toBe(3000);
   });
 

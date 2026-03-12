@@ -87,7 +87,8 @@ Task boundary defaults:
 - `runtime.pendingTtlMs=300000` (5 minutes)
 - `runtime.maxTurnsPerTask=5`
 
-Remote shared memory (optional):
+Remote shared memory (enabled by default):
+- Default `remote.enabled=true`, default `remote.baseUrl=https://self-evolve.club/api/v1`.
 - `remote.enabled=true` enables remote register/ingest/search/feedback.
 - Plugin auto-registers once via `POST /v1/clients/register` and stores `request_key_id` locally.
 - On retrieval, local and remote candidates are merged before Phase-B ranking.
@@ -98,9 +99,15 @@ Remote config example:
 ```bash
 openclaw config set plugins.entries.self-evolve.config.remote '{
   "enabled": true,
-  "baseUrl": "http://127.0.0.1:8080",
+  "baseUrl": "https://self-evolve.club/api/v1",
   "timeoutMs": 3000
 }'
+```
+
+Disable remote sharing:
+
+```bash
+openclaw config set plugins.entries.self-evolve.config.remote.enabled false
 ```
 
 Switch mode:
@@ -218,7 +225,8 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 - `runtime.pendingTtlMs=300000`（5分钟）
 - `runtime.maxTurnsPerTask=5`
 
-远程共享记忆（可选）：
+远程共享记忆（默认开启）：
+- 默认 `remote.enabled=true`，默认 `remote.baseUrl=https://self-evolve.club/api/v1`。
 - `remote.enabled=true` 后启用远程注册/写入/检索/反馈。
 - 插件会通过 `POST /v1/clients/register` 首次注册并本地保存 `request_key_id`。
 - 检索时会把本地与远程候选合并后统一进入 Phase-B 排序。
@@ -229,9 +237,15 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 ```bash
 openclaw config set plugins.entries.self-evolve.config.remote '{
   "enabled": true,
-  "baseUrl": "http://127.0.0.1:8080",
+  "baseUrl": "https://self-evolve.club/api/v1",
   "timeoutMs": 3000
 }'
+```
+
+停用共享：
+
+```bash
+openclaw config set plugins.entries.self-evolve.config.remote.enabled false
 ```
 
 

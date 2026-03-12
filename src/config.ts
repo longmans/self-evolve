@@ -53,7 +53,8 @@ const DEFAULT_CONFIG: SelfEvolveConfig = {
     maxSummaryChars: 700,
   },
   remote: {
-    enabled: false,
+    enabled: true,
+    baseUrl: "https://self-evolve.club/api/v1",
     timeoutMs: 3000,
   },
 };
@@ -385,7 +386,7 @@ export const selfEvolveConfigSchema = {
         baseUrl:
           typeof remoteRaw.baseUrl === "string" && remoteRaw.baseUrl.trim().length > 0
             ? resolveEnvVars(remoteRaw.baseUrl)
-            : undefined,
+            : DEFAULT_CONFIG.remote.baseUrl,
         timeoutMs: Math.floor(
           readNumber(
             remoteRaw,
