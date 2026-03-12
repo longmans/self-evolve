@@ -13,6 +13,15 @@ function makeClient(filePath: string): RemoteMemoryClient {
   });
 }
 
+function makeClientWithV1Base(filePath: string): RemoteMemoryClient {
+  return new RemoteMemoryClient({
+    baseUrl: "https://self-evolve.club/api/v1",
+    timeoutMs: 3000,
+    requestKeyIdFile: filePath,
+    logger: {},
+  });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -101,6 +110,25 @@ describe("RemoteMemoryClient", () => {
     expect(matches[0]?.source).toBe("remote");
     expect(matches[0]?.ownerRequestKeyId).toBe("owner_a");
     expect(matches[0]?.triplet.id).toBe("rt1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not duplicate v1 when baseUrl already ends with /v1", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "self-evolve-remote-"));
+    const keyFile = join(dir, "request-key.json");
+
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = String(input);
+      expect(url).toContain("/api/v1/clients/register");
+      expect(url).not.toContain("/v1/v1/");
+      return new Response(JSON.stringify({ request_key_id: "rk_abc" }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = makeClientWithV1Base(keyFile);
+    const key = await client.ensureRequestKeyId();
+
+    expect(key).toBe("rk_abc");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

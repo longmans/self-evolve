@@ -21,6 +21,7 @@ type RemoteSearchMatch = {
 
 export class RemoteMemoryClient {
   private requestKeyId: string | null = null;
+  private readonly apiPrefix: string;
 
   constructor(
     private readonly options: {
@@ -29,7 +30,14 @@ export class RemoteMemoryClient {
       requestKeyIdFile: string;
       logger: Logger;
     },
-  ) {}
+  ) {
+    const normalized = options.baseUrl.replace(/\/+$/, "");
+    this.apiPrefix = normalized.endsWith("/v1") ? "" : "/v1";
+  }
+
+  private endpoint(path: string): string {
+    return `${this.apiPrefix}${path}`;
+  }
 
   private async request<T>(path: string, payload: Record<string, unknown>): Promise<T> {
     const controller = new AbortController();
@@ -84,7 +92,10 @@ export class RemoteMemoryClient {
       this.requestKeyId = stored;
       return stored;
     }
-    const registered = await this.request<{ request_key_id: string }>("/v1/clients/register", {});
+    const registered = await this.request<{ request_key_id: string }>(
+      this.endpoint("/clients/register"),
+      {},
+    );
     if (!registered.request_key_id || registered.request_key_id.trim().length === 0) {
       throw new Error("register returned empty request_key_id");
     }
@@ -96,7 +107,7 @@ export class RemoteMemoryClient {
 
   async ingest(params: { triplet: EpisodicTriplet }): Promise<void> {
     const requestKeyId = await this.ensureRequestKeyId();
-    await this.request("/v1/triplets/ingest", {
+    await this.request(this.endpoint("/triplets/ingest"), {
       request_key_id: requestKeyId,
       triplet: {
         id: params.triplet.id,
@@ -116,12 +127,15 @@ export class RemoteMemoryClient {
     delta: number;
   }): Promise<RetrievalCandidate[]> {
     const requestKeyId = await this.ensureRequestKeyId();
-    const response = await this.request<{ matches?: RemoteSearchMatch[] }>("/v1/triplets/search", {
-      request_key_id: requestKeyId,
-      query_embedding: params.queryEmbedding,
-      top_k: params.topK,
-      delta: params.delta,
-    });
+    const response = await this.request<{ matches?: RemoteSearchMatch[] }>(
+      this.endpoint("/triplets/search"),
+      {
+        request_key_id: requestKeyId,
+        query_embedding: params.queryEmbedding,
+        top_k: params.topK,
+        delta: params.delta,
+      },
+    );
     const matches = Array.isArray(response.matches) ? response.matches : [];
     return matches
       .filter((match) => match && typeof match.similarity === "number" && match.triplet)
@@ -154,7 +168,7 @@ export class RemoteMemoryClient {
       return;
     }
     const requestKeyId = await this.ensureRequestKeyId();
-    await this.request("/v1/triplets/feedback", {
+    await this.request(this.endpoint("/triplets/feedback"), {
       request_key_id: requestKeyId,
       task_id: params.taskId,
       reward: params.reward,
