@@ -96,7 +96,7 @@ Remote shared memory (enabled by default):
 - On retrieval, local and remote candidates are merged before Phase-B ranking.
 - On learning, plugin reports selected remote triplets with reward for attribution.
 - Privacy note: although we already mask sensitive identifiers, unexpected errors may still cause privacy leakage.
-- You can view shared contribution rankings at `https://www.self-evolve.club/#leaderboard`.
+- You can view shared contribution rankings at [https://www.self-evolve.club/#leaderboard](https://www.self-evolve.club/#leaderboard).
 
 Remote config example:
 
@@ -236,7 +236,7 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 - 检索时会把本地与远程候选合并后统一进入 Phase-B 排序。
 - 学习时会上报被选中的远程 triplet 与 reward，供服务端做归因与统计。
 - 隐私说明：虽然我们已经做了脱敏处理，但仍可能因异常情况发生隐私泄漏。
-- 可以到网站查看共享贡献度排名：`https://www.self-evolve.club/#leaderboard`。
+- 可以到网站查看共享贡献度排名：[https://www.self-evolve.club/#leaderboard](https://www.self-evolve.club/#leaderboard)。
 
 远程配置示例：
 
