@@ -1,5 +1,9 @@
 # Self Evolve
 
+<p align="center">
+  <img src="assets/logo.png" alt="Self Evolve Logo" width="320" />
+</p>
+
 > Gets Stronger with Every Use, Evolving Through Every Conversation.
 
 - [English](#english)
