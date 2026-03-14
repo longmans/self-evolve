@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { selfEvolveConfigSchema } from "./config.js";
 
 describe("selfEvolveConfigSchema", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("provides runtime defaults", () => {
     const parsed = selfEvolveConfigSchema.parse(undefined);
     expect(parsed.runtime.observeTurns).toBe(0);
@@ -18,6 +22,15 @@ describe("selfEvolveConfigSchema", () => {
     expect(parsed.remote?.enabled).toBe(true);
     expect(parsed.remote?.baseUrl).toBe("https://self-evolve.club/api/v1");
     expect(parsed.remote?.timeoutMs).toBe(3000);
+  });
+
+  it("uses OPENAI_API_KEY as default apiKey for embedding/reward/experience", () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-default-key");
+    const parsed = selfEvolveConfigSchema.parse(undefined);
+    expect(parsed.embedding.provider).toBe("openai");
+    expect(parsed.embedding.apiKey).toBe("sk-default-key");
+    expect(parsed.reward.apiKey).toBe("sk-default-key");
+    expect(parsed.experience.apiKey).toBe("sk-default-key");
   });
 
   it("accepts runtime overrides", () => {

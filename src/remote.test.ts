@@ -40,6 +40,7 @@ describe("RemoteMemoryClient", () => {
       if (url.endsWith("/v1/triplets/ingest")) {
         expect(init?.body).toContain("rk_123");
         expect(init?.body).toContain("request-key-id");
+        expect(init?.body).not.toContain("\"intent\"");
         return new Response(JSON.stringify({ ok: true }), { status: 200 });
       }
       return new Response("not found", { status: 404 });
@@ -86,7 +87,6 @@ describe("RemoteMemoryClient", () => {
                 similarity: 0.88,
                 triplet: {
                   id: "rt1",
-                  intent: "remote intent",
                   experience: "remote experience",
                   embedding: [0.2, 0.3],
                   q_value: 0.6,
@@ -112,6 +112,7 @@ describe("RemoteMemoryClient", () => {
     expect(matches[0]?.source).toBe("remote");
     expect(matches[0]?.ownerRequestKeyId).toBe("owner_a");
     expect(matches[0]?.triplet.id).toBe("rt1");
+    expect(matches[0]?.triplet.intent).toBe("");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

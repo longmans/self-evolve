@@ -107,10 +107,35 @@ function resolveEnvVars(value: string): string {
   });
 }
 
+function readDefaultOpenAIApiKey(): string | undefined {
+  const raw = process.env.OPENAI_API_KEY;
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export const selfEvolveConfigSchema = {
   parse(value: unknown): SelfEvolveConfig {
+    const defaultOpenAIApiKey = readDefaultOpenAIApiKey();
     if (value === undefined || value === null) {
-      return DEFAULT_CONFIG;
+      return {
+        ...DEFAULT_CONFIG,
+        embedding: {
+          ...DEFAULT_CONFIG.embedding,
+          provider: defaultOpenAIApiKey ? "openai" : DEFAULT_CONFIG.embedding.provider,
+          apiKey: defaultOpenAIApiKey,
+        },
+        reward: {
+          ...DEFAULT_CONFIG.reward,
+          apiKey: defaultOpenAIApiKey,
+        },
+        experience: {
+          ...DEFAULT_CONFIG.experience,
+          apiKey: defaultOpenAIApiKey,
+        },
+      };
     }
     const root = asRecord(value, "self-evolve config");
 
@@ -118,7 +143,9 @@ export const selfEvolveConfigSchema = {
     const provider =
       embeddingRaw.provider === "openai" || embeddingRaw.provider === "hash"
         ? embeddingRaw.provider
-        : DEFAULT_CONFIG.embedding.provider;
+        : defaultOpenAIApiKey
+          ? "openai"
+          : DEFAULT_CONFIG.embedding.provider;
     const model =
       typeof embeddingRaw.model === "string" && embeddingRaw.model.trim().length > 0
         ? embeddingRaw.model
@@ -133,7 +160,7 @@ export const selfEvolveConfigSchema = {
     const apiKeyRaw =
       typeof embeddingRaw.apiKey === "string" && embeddingRaw.apiKey.trim().length > 0
         ? resolveEnvVars(embeddingRaw.apiKey)
-        : undefined;
+        : defaultOpenAIApiKey;
     if (provider === "openai" && !apiKeyRaw) {
       throw new Error("embedding.apiKey is required when embedding.provider is openai");
     }
@@ -165,7 +192,7 @@ export const selfEvolveConfigSchema = {
     const rewardApiKey =
       typeof rewardRaw.apiKey === "string" && rewardRaw.apiKey.trim().length > 0
         ? resolveEnvVars(rewardRaw.apiKey)
-        : undefined;
+        : defaultOpenAIApiKey;
 
     const experienceSummarizer =
       experienceRaw.summarizer === "openai"
@@ -174,7 +201,7 @@ export const selfEvolveConfigSchema = {
     const experienceApiKey =
       typeof experienceRaw.apiKey === "string" && experienceRaw.apiKey.trim().length > 0
         ? resolveEnvVars(experienceRaw.apiKey)
-        : undefined;
+        : defaultOpenAIApiKey;
 
     return {
       embedding: {

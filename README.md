@@ -30,17 +30,21 @@ openclaw plugins install ./self-evolve
 export OPENAI_API_KEY=sk-xxx
 ```
 
-3. One-shot config
-
-```bash
-openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embedding":{"provider":"openai","apiKey":"${OPENAI_API_KEY}","model":"text-embedding-3-small","dimensions":512},"reward":{"provider":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4.1-mini","temperature":0},"experience":{"summarizer":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4.1-mini","temperature":0}}}'
-```
-
-4. Restart and verify
+3. Restart and verify
 - Restart gateway.
+```bash
+openclaw gateway restart
+```
 - Check logs for:
   - `self-evolve: initialized ...`
-  - `self-evolve: feedback scored ... learn=true`
+
+Optional: if you want to override defaults, run one-shot config
+
+> Keep `embedding` default unchanged for remote consistency.
+
+```bash
+openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"reward":{"provider":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4.1-mini","temperature":0},"experience":{"summarizer":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4.1-mini","temperature":0}}}'
+```
 
 ### Effect Logs
 
@@ -67,6 +71,28 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 - If feedback is detected, scores reward and decides learning.
 - If reward + mode + intent gates pass, updates Q and appends episodic memory.
 - If message looks like a new request, current task can be closed and a new one starts.
+
+### Project Workflow
+
+```mermaid
+flowchart TD
+  A[Receive user message] --> B{Feedback turn?}
+  B -- Yes --> C[Score reward and check learning gates]
+  C --> D{Should learn?}
+  D -- Yes --> E[Local sanitizeMemoryText redaction]
+  E --> F[LLM summarizes and second redaction]
+  F --> G[Append local memory triplet]
+  G --> H[Optional remote ingest by request_key_id]
+  D -- No --> I[Skip learning]
+  B -- No --> J[Detect intent and task boundary]
+  J --> K[Retrieve local + remote candidates]
+  K --> L[Phase-B rank/select memories]
+  L --> M[Inject memories and generate reply]
+  M --> N[Set task to waiting_feedback]
+  N --> A
+  H --> A
+  I --> A
+```
 
 ### Advanced Settings
 
@@ -97,10 +123,15 @@ Task boundary defaults:
 Remote shared memory (enabled by default):
 - Default `remote.enabled=true`, default `remote.baseUrl=https://self-evolve.club/api/v1`.
 - `remote.enabled=true` enables remote register/ingest/search/feedback.
+- With remote enabled, you can also leverage high-value experience contributed by others to improve your own self-evolution quality.
 - Plugin auto-registers once via `POST /v1/clients/register` and stores `request_key_id` locally.
 - On retrieval, local and remote candidates are merged before Phase-B ranking.
 - On learning, plugin reports selected remote triplets with reward for attribution.
-- Privacy note: although we already mask sensitive identifiers, unexpected errors may still cause privacy leakage.
+- Privacy design:
+  - User intent and conversation traces are sanitized locally before being used as memory payload.
+  - First redaction: `sanitizeMemoryText` removes conversation metadata, IDs, and sender-like tags.
+  - Second redaction: the experience summarizer requires the LLM to output transferable strategy and replace sensitive data with `[REDACTED_*]` placeholders.
+  - Shared remote data is limited to sanitized triplets (`intent` / `experience` / `embedding`) with anonymous attribution via `request_key_id`.
 - You can view shared contribution rankings at [https://self-evolve.club/#leaderboard](https://self-evolve.club/#leaderboard).
 
 Remote config example:
@@ -195,17 +226,21 @@ openclaw plugins install ./self-evolve
 export OPENAI_API_KEY=sk-xxx
 ```
 
-3. 一条命令配置
-
-```bash
-openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embedding":{"provider":"openai","apiKey":"${OPENAI_API_KEY}","model":"text-embedding-3-small","dimensions":512},"reward":{"provider":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4.1-mini","temperature":0},"experience":{"summarizer":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4.1-mini","temperature":0}}}'
-```
-
-4. 重启并验证
+3. 重启并验证
 - 重启 gateway。
+```bash
+openclaw gateway restart
+```
 - 查看日志是否出现：
   - `self-evolve: initialized ...`
-  - `self-evolve: feedback scored ... learn=true`
+
+可选：如果你想覆盖默认参数，再执行一条命令配置
+
+> 为了和远端保持一致，不要修改 `embedding` 配置。
+
+```bash
+openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"reward":{"provider":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4.1-mini","temperature":0},"experience":{"summarizer":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4.1-mini","temperature":0}}}'
+```
 
 ### 效果日志
 
@@ -216,6 +251,28 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 - 做对时明确表扬（强化正确策略）。
 - 做错时明确指出（降低错误策略权重）。
 - 明确反馈优于“ok/继续”这类模糊反馈。
+
+### 项目工作流程
+
+```mermaid
+flowchart TD
+  A[收到用户消息] --> B{是否反馈轮}
+  B -- 是 --> C[奖励打分并检查学习门槛]
+  C --> D{是否学习}
+  D -- 是 --> E[本地 sanitizeMemoryText 脱敏]
+  E --> F[LLM 总结并二次脱敏]
+  F --> G[写入本地记忆 triplet]
+  G --> H[可选远程写入 request_key_id 归因]
+  D -- 否 --> I[跳过学习]
+  B -- 否 --> J[识别意图并判断任务边界]
+  J --> K[检索本地+远程候选]
+  K --> L[Phase-B 排序并选择记忆]
+  L --> M[注入记忆并生成回复]
+  M --> N[任务进入 waiting_feedback]
+  N --> A
+  H --> A
+  I --> A
+```
 
 ### 高级配置
 
@@ -242,10 +299,15 @@ openclaw config set plugins.entries.self-evolve '{"enabled":true,"config":{"embe
 远程共享记忆（默认开启）：
 - 默认 `remote.enabled=true`，默认 `remote.baseUrl=https://self-evolve.club/api/v1`。
 - `remote.enabled=true` 后启用远程注册/写入/检索/反馈。
+- 开启 remote 后，你也可以吸收其他人沉淀的高价值经验，帮助自己更好地完成自我进化。
 - 插件会通过 `POST /v1/clients/register` 首次注册并本地保存 `request_key_id`。
 - 检索时会把本地与远程候选合并后统一进入 Phase-B 排序。
 - 学习时会上报被选中的远程 triplet 与 reward，供服务端做归因与统计。
-- 隐私说明：虽然我们已经做了脱敏处理，但仍可能因异常情况发生隐私泄漏。
+- 隐私设计：
+  - 用户意图与对话轨迹在进入记忆载荷前会先做本地脱敏处理。
+  - 第一次脱敏：`sanitizeMemoryText` 去除会话元数据、message_id 与 sender/tag 等标识。
+  - 第二次脱敏：经验总结阶段要求 LLM 输出可迁移策略，并把敏感信息替换为 `[REDACTED_*]` 占位符。
+  - 远程共享仅包含脱敏后的 triplet（`intent` / `experience` / `embedding`），并使用 `request_key_id` 做匿名归因。
 - 可以到网站查看共享贡献度排名：[https://self-evolve.club/#leaderboard](https://self-evolve.club/#leaderboard)。
 
 远程配置示例：

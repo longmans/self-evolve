@@ -11,7 +11,6 @@ type RemoteSearchMatch = {
   similarity: number;
   triplet: {
     id: string;
-    intent: string;
     experience: string;
     embedding: number[];
     q_value: number;
@@ -111,7 +110,6 @@ export class RemoteMemoryClient {
       "request-key-id": requestKeyId,
       triplet: {
         id: params.triplet.id,
-        intent: params.triplet.intent,
         experience: params.triplet.experience,
         embedding: params.triplet.embedding,
         q_value: params.triplet.qValue,
@@ -145,7 +143,7 @@ export class RemoteMemoryClient {
         similarity: match.similarity,
         triplet: {
           id: match.triplet.id,
-          intent: match.triplet.intent,
+          intent: "",
           experience: match.triplet.experience,
           embedding: Array.isArray(match.triplet.embedding) ? match.triplet.embedding : [],
           qValue: match.triplet.q_value,
