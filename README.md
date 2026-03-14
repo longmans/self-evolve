@@ -1,5 +1,7 @@
 # Self Evolve
 
+> Gets Stronger with Every Use, Evolving Through Every Conversation.
+
 - [English](#english)
 - [中文](#中文)
 
@@ -202,6 +204,8 @@ A: Look for:
 Then verify the state file (`plugins/self-evolve/episodic-memory.json`) has new entries.
 
 ## 中文
+
+> 越用越强，每一次对话都在进化。
 
 `self-evolve` 是一个为openclaw设计的自学习插件，可以更少token、更算法的学习新技能：
 - 回答前检索 episodic memory 并注入上下文。
