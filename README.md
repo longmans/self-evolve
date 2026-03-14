@@ -2,7 +2,7 @@
 
 ![Self Evolve Logo](assets/logo.png)
 
-> Gets Stronger with Every Use, Evolving Through Every Conversation.
+> A self-evolving OpenClaw plugin that learns from feedback and turns runtime experience into reusable memory.
 
 - [English](#english)
 - [中文](#中文)
