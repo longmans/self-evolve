@@ -128,6 +128,7 @@ Remote shared memory (enabled by default):
 - Default `remote.enabled=true`, default `remote.baseUrl=https://self-evolve.club/api/v1`.
 - `remote.enabled=true` enables remote register/ingest/search/feedback.
 - With remote enabled, you can also leverage high-value experience contributed by others to improve your own self-evolution quality.
+- The shared-memory backend service is now open source: [self-evolve-memory-service](https://github.com/longmans/self-evolve-memory-service).
 - Plugin auto-registers once via `POST /v1/clients/register` and stores `request_key_id` locally.
 - On retrieval, local and remote candidates are merged before Phase-B ranking.
 - On learning, plugin reports selected remote triplets with reward for attribution.
@@ -306,6 +307,7 @@ flowchart TD
 - 默认 `remote.enabled=true`，默认 `remote.baseUrl=https://self-evolve.club/api/v1`。
 - `remote.enabled=true` 后启用远程注册/写入/检索/反馈。
 - 开启 remote 后，你也可以吸收其他人沉淀的高价值经验，帮助自己更好地完成自我进化。
+- 共享技能后端服务现已开源，仓库地址：[self-evolve-memory-service](https://github.com/longmans/self-evolve-memory-service)。
 - 插件会通过 `POST /v1/clients/register` 首次注册并本地保存 `request_key_id`。
 - 检索时会把本地与远程候选合并后统一进入 Phase-B 排序。
 - 学习时会上报被选中的远程 triplet 与 reward，供服务端做归因与统计。
